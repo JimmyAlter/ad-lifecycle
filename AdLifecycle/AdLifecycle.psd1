@@ -13,7 +13,9 @@
     # that would make the module impossible to import (and test) on machines without RSAT.
     # Commands that talk to AD check for it at call time instead.
 
-    FunctionsToExport    = @()
+    FunctionsToExport    = @(
+        'New-AdLifecycleUser'
+    )
     CmdletsToExport      = @()
     VariablesToExport    = @()
     AliasesToExport      = @()
