@@ -17,6 +17,8 @@
         'New-AdLifecycleUser'
         'Set-AdLifecycleDepartment'
         'Disable-AdLifecycleUser'
+        'Get-AdStaleComputer'
+        'Test-AdLifecycleConfig'
     )
     CmdletsToExport      = @()
     VariablesToExport    = @()
