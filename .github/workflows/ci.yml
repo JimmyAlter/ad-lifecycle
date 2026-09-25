@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows PowerShell 5.1
+            os: windows-latest
+            shell: powershell
+            analyze: true
+          - name: PowerShell 7 on Windows
+            os: windows-latest
+            shell: pwsh
+            analyze: true
+          - name: PowerShell 7 on Linux
+            os: ubuntu-latest
+            shell: pwsh
+            analyze: false
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: PowerShell version
+        run: $PSVersionTable | Format-Table -AutoSize | Out-String
+
+      # Pester is pinned to 5.x: Windows ships Pester 3.4 in-box, and Pester 6 is a separate
+      # major version this suite has not been verified against.
+      - name: Install Pester and PSScriptAnalyzer
+        run: |
+          if ($PSVersionTable.PSEdition -eq 'Desktop') {
+              [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+          }
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -RequiredVersion 5.9.1 -Force -Scope CurrentUser -SkipPublisherCheck
+          Install-Module -Name PSScriptAnalyzer -RequiredVersion 1.25.0 -Force -Scope CurrentUser
+
+      - name: Pester
+        run: ./build.ps1 -Task Test -CI
+
+      - name: PSScriptAnalyzer
+        if: ${{ matrix.analyze && (success() || failure()) }}
+        run: ./build.ps1 -Task Analyze
+
+      - name: Upload test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.shell }}
+          path: testResults/
+          if-no-files-found: ignore
