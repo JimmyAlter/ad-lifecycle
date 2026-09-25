@@ -15,6 +15,7 @@
 
     FunctionsToExport    = @(
         'New-AdLifecycleUser'
+        'Disable-AdLifecycleUser'
     )
     CmdletsToExport      = @()
     VariablesToExport    = @()
