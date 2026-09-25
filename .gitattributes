@@ -1,0 +1,3 @@
+# Normalize line endings in the repository; keep UTF-8 BOMs untouched (they matter for
+# Windows PowerShell 5.1, see tests/Module.Tests.ps1).
+* text=auto

@@ -1,0 +1,13 @@
+# Test and coverage output (./build.ps1 -CI)
+testResults/
+
+# Real exports (leaver membership records) contain directory data; never commit them.
+*.csv
+!examples/*.csv
+
+# Editors and OS files
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
