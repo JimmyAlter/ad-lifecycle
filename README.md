@@ -1,14 +1,57 @@
 # AdLifecycle
 
 [![CI](https://github.com/JimmyAlter/ad-lifecycle/actions/workflows/ci.yml/badge.svg)](https://github.com/JimmyAlter/ad-lifecycle/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JimmyAlter/ad-lifecycle)](https://github.com/JimmyAlter/ad-lifecycle/releases)
+[![Coverage gate](https://img.shields.io/badge/coverage%20gate-90%25%20in%20CI-brightgreen)](#testing)
 
 A PowerShell module for the joiner / mover / leaver lifecycle of on-premises Active Directory
 accounts, plus a stale-computer report. It is built around guardrails rather than features:
 nothing is written to AD unless you confirm, every write can be previewed with `-WhatIf`, and
 the rules (OUs, groups, UPN suffix) live in a validated configuration file instead of in the code.
 
-This is a generalized, public version of the provisioning tooling I use day to day across
-several AD domains. The domain (`corp.example`), OUs and groups in this repository are fictional.
+Written from scratch for this public repository, based on the joiner / mover / leaver patterns I
+run in production. Public history starts at v0.1.0 (September 2026); see the
+[changelog](CHANGELOG.md). The domain (`corp.example`), OUs and groups in this repository are
+fictional.
+
+## Quick start in 60 seconds
+
+```powershell
+git clone https://github.com/JimmyAlter/ad-lifecycle.git
+cd ad-lifecycle
+Import-Module .\AdLifecycle\AdLifecycle.psd1
+
+# Offline, no AD needed: validate the example configuration (no output = valid).
+Test-AdLifecycleConfig -Path .\examples\lifecycle.config.psd1
+```
+
+Then copy `examples\lifecycle.config.psd1`, put your own UPN suffix, OUs and groups in it, and
+preview a joiner. `-WhatIf` only reads from AD (a writable DC lookup and the name-collision
+check), so it needs RSAT and a domain account, but it changes nothing:
+
+```text
+PS> New-AdLifecycleUser -GivenName 'Lucía' -Surname 'Muñoz' -Department Finance -Site Madrid -Title Accountant -ConfigPath .\my.config.psd1 -WhatIf
+
+What if: Performing the operation "Create user 'Lucía Muñoz' in 'OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example' and add to 6 group(s): GG-All-Staff, GG-VPN-Users, GG-Finance, GG-Share-Finance-RW, GG-App-ERP, GG-Reporting-Read" on target "lmunoz@corp.example".
+
+SamAccountName    : lmunoz
+UserPrincipalName : lmunoz@corp.example
+DisplayName       : Lucía Muñoz
+OU                : OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example
+DistinguishedName :
+Department        : Finance
+Site              : Madrid
+Title             : Accountant
+Manager           :
+Groups            : {GG-All-Staff, GG-VPN-Users, GG-Finance, GG-Share-Finance-RW...}
+FailedGroups      : {}
+InitialPassword   :
+Applied           : False
+```
+
+(Windows PowerShell 5.1, example configuration, no `lmunoz` in AD yet.) Drop `-WhatIf` and
+PowerShell asks for confirmation before creating anything. The same `-WhatIf` preview works for
+`Set-AdLifecycleUser` and `Disable-AdLifecycleUser`.
 
 ## Commands
 
@@ -33,6 +76,11 @@ Every command has comment-based help with examples: `Get-Help New-AdLifecycleUse
 - **Record before destroy.** The leaver captures all group memberships in its output, and
   optionally in a CSV, before removing anything. If the CSV cannot be written, the account is
   not touched. If disabling fails, nothing else is changed.
+- **Refuse the dangerous targets.** The leaver never offboards the built-in Administrator,
+  krbtgt or the account running it, and needs `-Force` for protected (`adminCount = 1`) accounts.
+  Re-running it on an account that is already offboarded changes nothing.
+- **Audit trail.** With `-LogPath`, every change is appended as one JSON line (who, when, which
+  DC, ticket, what was planned, what failed), without passwords.
 - **Passwords only as SecureString.** Initial passwords come from
   `System.Security.Cryptography.RandomNumberGenerator` (unbiased, with guaranteed upper/lower/
   digit/symbol), never exist as a `System.String`, and are never printed or logged. The result
@@ -59,8 +107,9 @@ Every command has comment-based help with examples: `Get-Help New-AdLifecycleUse
 - The `ActiveDirectory` module (RSAT) on the machine that runs the commands:
   - Windows 10/11: `Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0`
   - Windows Server: `Install-WindowsFeature RSAT-AD-PowerShell`
-- An account allowed to create users in the site OUs, manage the groups in the templates and move
-  objects into the disabled OU.
+- An account allowed to create users in the site OUs, manage the groups in the templates, update
+  user attributes (Department, Title, Manager, Office, Description), disable accounts, and move
+  users between site OUs and into the disabled OU.
 
 ## Install
 
