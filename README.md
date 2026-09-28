@@ -17,7 +17,7 @@ several AD domains. The domain (`corp.example`), OUs and groups in this reposito
 | `New-AdLifecycleUser` | Joiner | Yes, after confirmation. Creates the account from the site and department templates. |
 | `Set-AdLifecycleUser` | Mover | Yes, after confirmation. Applies the group difference between two department templates, and moves the account to another site OU, sets title and manager. Alias: `Set-AdLifecycleDepartment`. |
 | `Disable-AdLifecycleUser` | Leaver | Yes, after confirmation. Disables, records and removes group memberships, tags with the ticket, moves to the disabled OU. |
-| `Get-AdStaleComputer` | Hygiene | No. Lists computers that have not logged on for N days. |
+| `Get-AdStaleComputer` | Hygiene | No. Lists computers that have neither logged on nor changed their machine password for N days. |
 | `Test-AdLifecycleConfig` | Config | No, and works offline. Validates a configuration file. |
 
 Every command has comment-based help with examples: `Get-Help New-AdLifecycleUser -Full`.
@@ -201,13 +201,16 @@ Import-Csv .\leavers.csv | Disable-AdLifecycleUser -ExportPath .\removed-members
 ```powershell
 Get-AdStaleComputer -Days 120 |
     Sort-Object DaysInactive -Descending |
-    Format-Table Name, LastLogonUtc, DaysInactive, NeverLoggedOn, OperatingSystem
+    Format-Table Name, LastLogonUtc, DaysInactive, DaysSincePasswordSet, NeverLoggedOn, OperatingSystem
 ```
 
-Uses `lastLogonTimestamp`, converted from FILETIME to UTC. Computers that never logged on are
-listed only if they were created before the cutoff (so yesterday's pre-staged machines do not
-show up) and are flagged with `NeverLoggedOn`. It only reports; what to do with the list is up
-to you.
+Uses two signals, both converted from FILETIME to UTC: `lastLogonTimestamp` and `pwdLastSet`
+(domain members change their machine password every 30 days by default). A computer is
+reported only when both are older than `-Days`, so a machine whose logon timestamp lags but
+that still rotates its password is not flagged. `-LastLogonOnly` uses `lastLogonTimestamp`
+alone. Computers that never logged on are listed only if they were created before the cutoff
+(so yesterday's pre-staged machines do not show up) and are flagged with `NeverLoggedOn`. It
+only reports; what to do with the list is up to you.
 
 ## Configuration
 
@@ -270,7 +273,8 @@ controller:
   password is still returned when a group add fails, even under `-ErrorAction Stop`.
 - **Passwords:** SecureString only, read-only, length, character classes on 500 samples,
   uniqueness, allowed alphabet.
-- **Stale computers:** FILETIME conversion against a known value, threshold boundaries,
+- **Stale computers:** FILETIME conversion against a known value, threshold boundaries, the
+  `pwdLastSet` signal (and `-LastLogonOnly`),
   never-logged-on handling, the LDAP filter sent to AD.
 - **Configuration:** each broken case (24 of them) is reported; data files containing code are
   rejected without being executed.

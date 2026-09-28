@@ -10,11 +10,21 @@ Describe 'Get-AdStaleComputer' {
         $now = [datetime]::new(2026, 1, 31, 12, 0, 0, [System.DateTimeKind]::Utc)
         Mock Get-Date -ModuleName AdLifecycle -MockWith { $now }
 
+        # pwdLastSet defaults to the last logon (or, without one, the creation date), so only the
+        # computers that set -PasswordDaysAgo / -RawPasswordLastSet exercise the second signal.
         function New-TestComputer {
-            param([string]$Name, $LastLogonDaysAgo, [int]$CreatedDaysAgo = 1000, $RawLastLogon)
+            param([string]$Name, $LastLogonDaysAgo, [int]$CreatedDaysAgo = 1000, $RawLastLogon, $PasswordDaysAgo, $RawPasswordLastSet)
             $raw = $RawLastLogon
             if ($null -ne $LastLogonDaysAgo) {
                 $raw = $now.AddDays(-$LastLogonDaysAgo).ToFileTimeUtc()
+            }
+            $rawPassword = $RawPasswordLastSet
+            if ($null -eq $rawPassword) {
+                if ($null -eq $PasswordDaysAgo) {
+                    $PasswordDaysAgo = $CreatedDaysAgo
+                    if ($null -ne $LastLogonDaysAgo) { $PasswordDaysAgo = $LastLogonDaysAgo }
+                }
+                $rawPassword = $now.AddDays(-$PasswordDaysAgo).ToFileTimeUtc()
             }
             [pscustomobject]@{
                 Name               = $Name
@@ -22,6 +32,7 @@ Describe 'Get-AdStaleComputer' {
                 Enabled            = $true
                 OperatingSystem    = 'Windows 11 Pro'
                 lastLogonTimestamp = $raw
+                pwdLastSet         = $rawPassword
                 whenCreated        = $now.AddDays(-$CreatedDaysAgo)
             }
         }
@@ -34,6 +45,10 @@ Describe 'Get-AdStaleComputer' {
             New-TestComputer -Name 'PC-NEVER-OLD' -CreatedDaysAgo 300
             New-TestComputer -Name 'PC-NEVER-NEW' -CreatedDaysAgo 5
             New-TestComputer -Name 'PC-ZERO' -RawLastLogon ([long]0) -CreatedDaysAgo 400
+            # Old logon, but the machine changed its password 20 days ago: alive.
+            New-TestComputer -Name 'PC-PWD-FRESH' -LastLogonDaysAgo 150 -PasswordDaysAgo 20
+            # Never logged on, but a fresh password: alive (logon not replicated / not written).
+            New-TestComputer -Name 'PC-NEVER-PWD-FRESH' -CreatedDaysAgo 300 -PasswordDaysAgo 5
         )
         Mock Get-ADComputer -ModuleName AdLifecycle -MockWith { $computers }
     }
@@ -82,15 +97,53 @@ Describe 'Get-AdStaleComputer' {
         @((Get-AdStaleComputer -Days 150).Name | Sort-Object) | Should -Be @('PC-NEVER-OLD', 'PC-OLD', 'PC-ZERO')
     }
 
-    It 'asks AD only for candidates, with the cutoff as FILETIME in the LDAP filter' {
+    It 'asks AD only for candidates, with the cutoff as FILETIME on both attributes in the LDAP filter' {
         Get-AdStaleComputer -Days 90 | Out-Null
 
         $cutoff = $now.AddDays(-90).ToFileTimeUtc()
         Should -Invoke Get-ADComputer -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
-            $LDAPFilter -eq "(|(!(lastLogonTimestamp=*))(lastLogonTimestamp<=$cutoff))" -and
+            $LDAPFilter -eq "(&(|(!(lastLogonTimestamp=*))(lastLogonTimestamp<=$cutoff))(|(!(pwdLastSet=*))(pwdLastSet<=$cutoff)))" -and
             $Properties -contains 'lastLogonTimestamp' -and
+            $Properties -contains 'pwdLastSet' -and
             $Properties -contains 'whenCreated'
         }
+    }
+
+    It 'with -LastLogonOnly, filters on lastLogonTimestamp alone' {
+        Get-AdStaleComputer -Days 90 -LastLogonOnly | Out-Null
+
+        $cutoff = $now.AddDays(-90).ToFileTimeUtc()
+        Should -Invoke Get-ADComputer -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+            $LDAPFilter -eq "(|(!(lastLogonTimestamp=*))(lastLogonTimestamp<=$cutoff))"
+        }
+    }
+
+    It 'does not report a computer whose machine password changed after the cutoff' {
+        $names = (Get-AdStaleComputer -Days 90).Name
+        $names | Should -Not -Contain 'PC-PWD-FRESH'
+        $names | Should -Not -Contain 'PC-NEVER-PWD-FRESH'
+    }
+
+    It 'reports them with -LastLogonOnly (lastLogonTimestamp alone)' {
+        $stale = Get-AdStaleComputer -Days 90 -LastLogonOnly
+        @($stale.Name | Sort-Object) | Should -Be @('PC-91', 'PC-NEVER-OLD', 'PC-NEVER-PWD-FRESH', 'PC-OLD', 'PC-PWD-FRESH', 'PC-ZERO')
+        ($stale | Where-Object Name -EQ 'PC-PWD-FRESH').DaysSincePasswordSet | Should -Be 20
+    }
+
+    It 'converts pwdLastSet to UTC and counts pwdLastSet = 0 as no password change' {
+        Mock Get-ADComputer -ModuleName AdLifecycle -MockWith {
+            New-TestComputer -Name 'PC-PWD-OLD' -LastLogonDaysAgo 120 -PasswordDaysAgo 130
+            New-TestComputer -Name 'PC-PWD-ZERO' -LastLogonDaysAgo 120 -RawPasswordLastSet ([long]0)
+        }
+        $stale = Get-AdStaleComputer -Days 90
+
+        $old = $stale | Where-Object Name -EQ 'PC-PWD-OLD'
+        $old.PasswordLastSetUtc | Should -Be $now.AddDays(-130)
+        $old.PasswordLastSetUtc.Kind | Should -Be 'Utc'
+        $old.DaysSincePasswordSet | Should -Be 130
+        $zero = $stale | Where-Object Name -EQ 'PC-PWD-ZERO'
+        $zero.PasswordLastSetUtc | Should -BeNullOrEmpty
+        $zero.DaysSincePasswordSet | Should -BeNullOrEmpty
     }
 
     It 'passes -SearchBase through' {
@@ -105,11 +158,11 @@ Describe 'Get-AdStaleComputer' {
     }
 
     It 'passes -Server and -Credential through and does not discover a DC' {
-        $credential = [pscredential]::new('CORPsvc-report', [securestring]::new())
+        $credential = [pscredential]::new('CORP\svc-report', [securestring]::new())
         Get-AdStaleComputer -Server dc07.corp.example -Credential $credential | Out-Null
 
         Should -Invoke Get-ADComputer -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
-            $Server -eq 'dc07.corp.example' -and $Credential.UserName -eq 'CORPsvc-report'
+            $Server -eq 'dc07.corp.example' -and $Credential.UserName -eq 'CORP\svc-report'
         }
         Should -Invoke Get-ADDomainController -ModuleName AdLifecycle -Times 0 -Exactly
     }
@@ -123,7 +176,7 @@ Describe 'Get-AdStaleComputer' {
         $first = Get-AdStaleComputer | Select-Object -First 1
         $first.PSObject.TypeNames | Should -Contain 'AdLifecycle.StaleComputer'
         $first.PSObject.Properties.Name | Should -Be @(
-            'Name', 'Enabled', 'OperatingSystem', 'LastLogonUtc', 'DaysInactive', 'NeverLoggedOn', 'WhenCreatedUtc', 'DistinguishedName'
+            'Name', 'Enabled', 'OperatingSystem', 'LastLogonUtc', 'DaysInactive', 'NeverLoggedOn', 'PasswordLastSetUtc', 'DaysSincePasswordSet', 'WhenCreatedUtc', 'DistinguishedName'
         )
     }
 

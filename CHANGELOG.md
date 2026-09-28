@@ -30,7 +30,10 @@ version is 0, a minor version may contain breaking changes; they are called out 
 - `Set-AdLifecycleDepartment` is renamed `Set-AdLifecycleUser`, since it now changes more than
   the department, and `-Department` is optional (at least one of `-Department`, `-Site`,
   `-Title`, `-Manager` is required). `Set-AdLifecycleDepartment` remains as an exported alias.
-
+- `Get-AdStaleComputer` uses `pwdLastSet` as a second staleness signal: a computer is reported
+  only when both `lastLogonTimestamp` and `pwdLastSet` are older than `-Days`. New output
+  properties `PasswordLastSetUtc` and `DaysSincePasswordSet`; `-LastLogonOnly` restores the
+  0.1.0 behaviour. This can report fewer computers than 0.1.0 did.
 - The three write commands pin one writable domain controller per run
   (`Get-ADDomainController -Discover -Writable`, or `-Server`) and send every AD call to it. This
   fixes joiner group adds that could fail on a DC that had not replicated the new account yet.
