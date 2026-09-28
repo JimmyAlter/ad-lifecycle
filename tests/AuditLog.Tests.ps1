@@ -58,7 +58,8 @@ Describe 'Audit log' {
             $first.Applied | Should -BeTrue
             $first.Server | Should -Be $TestDomainController
             $first.Operator | Should -BeLike "*$([Environment]::UserName)"
-            $first.TimestampUtc | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$'
+            # Checked on the raw text: PowerShell 7's ConvertFrom-Json turns ISO 8601 strings into DateTime.
+            (Get-Content -LiteralPath $log -Encoding UTF8)[0] | Should -Match '^\{"TimestampUtc":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z",'
             $first.Changes.UserPrincipalName | Should -Be 'lmunoz@corp.example'
             $first.Changes.OU | Should -Be $madridOu
             $first.Changes.Groups | Should -Contain 'GG-Finance'
