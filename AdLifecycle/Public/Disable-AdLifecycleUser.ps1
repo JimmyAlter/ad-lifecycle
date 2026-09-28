@@ -23,6 +23,10 @@ function Disable-AdLifecycleUser {
         current Windows user, or the -Credential account). Accounts with adminCount = 1 (current
         or former members of protected groups) are refused unless -Force is used.
 
+        Idempotent: an account that is already disabled and already in DisabledOU is skipped with
+        a warning (Skipped = $true), so re-running a bulk CSV does not overwrite the original
+        description, date and ticket.
+
         -Ticket is mandatory: every leaver is traceable to a request. ConfirmImpact is High, so
         PowerShell asks before changing anything; -WhatIf shows the plan and writes nothing
         (not even the CSV). Failures in steps 3-5 are reported as errors and listed in the result
@@ -73,7 +77,8 @@ function Disable-AdLifecycleUser {
         Bulk leavers from a CSV with SamAccountName and Ticket columns.
 
     .OUTPUTS
-        AdLifecycle.LeaverResult. Applied is $false when -WhatIf was used or the prompt declined.
+        AdLifecycle.LeaverResult. Applied is $false when -WhatIf was used, the prompt was declined
+        or the account was skipped because it was already offboarded (Skipped = $true).
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType('AdLifecycle.LeaverResult')]
@@ -163,6 +168,32 @@ function Disable-AdLifecycleUser {
             return
         }
 
+        $parentDn = $userDn -replace '^(?:[^,\\]|\\.)+,', ''
+        $needsMove = $parentDn -ne $disabledOu
+
+        # Already offboarded (disabled and in DisabledOU): leave it alone, so a re-run of a bulk
+        # CSV does not overwrite the original description, date and ticket.
+        if ($user.Enabled -eq $false -and -not $needsMove) {
+            Write-Warning ("'{0}' is already disabled and in '{1}'; skipped (description and groups left as they are)." -f $user.SamAccountName, $disabledOu)
+            [pscustomobject]@{
+                PSTypeName          = 'AdLifecycle.LeaverResult'
+                SamAccountName      = $user.SamAccountName
+                DistinguishedName   = $userDn
+                Ticket              = $Ticket
+                Description         = $user.Description
+                PreviousDescription = $user.Description
+                PreviousGroups      = @()
+                KeptGroups          = @()
+                RemovedGroups       = @()
+                FailedGroups        = @()
+                TargetOU            = $disabledOu
+                ExportPath          = $null
+                Skipped             = $true
+                Applied             = $false
+            }
+            return
+        }
+
         try {
             $memberships = @(Get-AdLifecycleUserGroup -User $user -Connection $connection)
         } catch {
@@ -176,8 +207,6 @@ function Disable-AdLifecycleUser {
         $toRemove = @($memberships | Where-Object { -not ($_.IsPrimary -or $_.IsDomainUsers) })
 
         $description = 'Disabled {0} by {1} - ticket {2}' -f $today, $operator, $Ticket
-        $parentDn = $userDn -replace '^(?:[^,\\]|\\.)+,', ''
-        $needsMove = $parentDn -ne $disabledOu
 
         $result = [pscustomobject]@{
             PSTypeName          = 'AdLifecycle.LeaverResult'
@@ -192,6 +221,7 @@ function Disable-AdLifecycleUser {
             FailedGroups        = @()
             TargetOU            = $disabledOu
             ExportPath          = $null
+            Skipped             = $false
             Applied             = $false
         }
 

@@ -165,7 +165,9 @@ Applied       : False
 `-Ticket` is mandatory. The leaver refuses, without changing anything, the built-in
 Administrator (RID 500), krbtgt (RID 502) and the account running it (the current Windows user
 or the `-Credential` account); accounts with `adminCount = 1` (current or former members of
-protected groups) need `-Force`. The primary group and Domain Users are kept, matched by RID (the
+protected groups) need `-Force`. An account that is already disabled and already in
+`DisabledOU` is skipped with a warning (`Skipped = True`), so re-running a bulk CSV does not
+overwrite the original description and ticket. The primary group and Domain Users are kept, matched by RID (the
 `primaryGroupID` and 513) rather than by name, so it also works on localized domains
 ("Usuarios del dominio"). Memberships come from the user's `memberOf` and `primaryGroupID`
 rather than `Get-ADPrincipalGroupMembership`, which fails outright for users in groups that

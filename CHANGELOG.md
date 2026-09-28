@@ -17,6 +17,9 @@ version is 0, a minor version may contain breaking changes; they are called out 
 - Leaver safety guard: `Disable-AdLifecycleUser` refuses the built-in Administrator (RID 500),
   krbtgt (RID 502) and the caller's own account (Windows identity or `-Credential` user), and
   accounts with `adminCount = 1` unless `-Force` is given.
+- The leaver is idempotent: an account that is already disabled and in `DisabledOU` is skipped
+  with a warning (new `Skipped` property on `AdLifecycle.LeaverResult`) instead of having its
+  description, date and ticket overwritten.
 
 ### Changed
 

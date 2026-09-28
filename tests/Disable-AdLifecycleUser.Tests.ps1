@@ -264,6 +264,40 @@ Describe 'Disable-AdLifecycleUser' {
             Should -Invoke Move-ADObject -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Server -eq $TestDomainController }
         }
 
+        It 'skips an account that is already disabled and in the disabled OU, with a warning' {
+            $csv = Join-Path $TestDrive 'rerun.csv'
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'gone1' } -MockWith {
+                New-TestAdUser -SamAccountName 'gone1' -DistinguishedName "CN=Gone One,$disabledOu" -Rid 1604 `
+                    -MemberOf $groupsToRemove[0].DistinguishedName -Property @{ Enabled = $false; Description = 'Disabled 2025-11-02 by CORP\it.admin - ticket INC-1000' }
+            }
+
+            $result = Disable-AdLifecycleUser -Identity gone1 -Ticket 'INC-2000' -ConfigPath $ExampleConfigPath -ExportPath $csv -Confirm:$false -WarningVariable warnings -WarningAction SilentlyContinue
+
+            $result.Skipped | Should -BeTrue
+            $result.Applied | Should -BeFalse
+            $result.Description | Should -Be 'Disabled 2025-11-02 by CORP\it.admin - ticket INC-1000'
+            @($warnings).Count | Should -Be 1
+            "$($warnings[0])" | Should -BeLike "*'gone1' is already disabled and in*skipped*"
+            $csv | Should -Not -Exist
+            foreach ($command in $AdWriteCommandNames) {
+                Should -Invoke $command -ModuleName AdLifecycle -Times 0 -Exactly
+            }
+        }
+
+        It 'still offboards a disabled account that is not in the disabled OU yet' {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'half1' } -MockWith {
+                New-TestAdUser -SamAccountName 'half1' -DistinguishedName 'CN=Half One,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example' -Rid 1605 `
+                    -Property @{ Enabled = $false }
+            }
+
+            $result = Disable-AdLifecycleUser -Identity half1 -Ticket 'INC-2001' -ConfigPath $ExampleConfigPath -Confirm:$false
+
+            $result.Skipped | Should -BeFalse
+            $result.Applied | Should -BeTrue
+            Should -Invoke Set-ADUser -ModuleName AdLifecycle -Times 1 -Exactly
+            Should -Invoke Move-ADObject -ModuleName AdLifecycle -Times 1 -Exactly
+        }
+
         It 'keeps a non-default primary group as well as Domain Users' {
             # With another primary group, Domain Users shows up in memberOf like any other group.
             Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'contractor1' } -MockWith {
