@@ -57,6 +57,15 @@ function New-AdLifecycleUser {
     .PARAMETER Credential
         Account to connect to Active Directory as. Defaults to the current user.
 
+    .PARAMETER Ticket
+        Optional ticket or request id (letters, digits and # . / - _; up to 64 characters),
+        recorded in the audit log. Can come from a Ticket column in the CSV.
+
+    .PARAMETER LogPath
+        Optional audit log file: one JSON line per account created or attempted (UTC timestamp,
+        operator, ticket, planned changes, result; never the password). Overrides LogPath from
+        the configuration. The folder must exist. Nothing is logged under -WhatIf.
+
     .EXAMPLE
         New-AdLifecycleUser -GivenName 'Jose' -Surname 'Pena' -Department Finance -Site Madrid -Title 'Accountant' -ConfigPath .\lifecycle.config.psd1 -WhatIf
 
@@ -111,6 +120,15 @@ function New-AdLifecycleUser {
         [ValidateNotNullOrEmpty()]
         [string]$ConfigPath,
 
+        [Parameter(ValueFromPipelineByPropertyName)]
+        [AllowEmptyString()]
+        [AllowNull()]
+        [ValidatePattern('^([\w#./-]{1,64})?$')]
+        [string]$Ticket,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$LogPath,
+
         [ValidateNotNullOrEmpty()]
         [string]$Server,
 
@@ -123,6 +141,7 @@ function New-AdLifecycleUser {
         Assert-AdModule
         $config = Get-AdLifecycleConfig -Path $ConfigPath
         $connection = Get-AdLifecycleConnection -Server $Server -Credential $Credential -DiscoverWritable
+        $auditLog = Resolve-AdLifecycleLogPath -LogPath $LogPath -Config $config
 
         $passwordLength = 16
         if ($config.Contains('PasswordLength')) {
@@ -238,12 +257,33 @@ function New-AdLifecycleUser {
             $newUserParams['Manager'] = $managerDn
         }
 
+        # Planned changes for the audit log. The password is deliberately not part of it.
+        $logEntry = @{
+            Command = 'New-AdLifecycleUser'
+            Target  = $sam
+            Ticket  = $Ticket
+            Changes = [ordered]@{
+                SamAccountName    = $sam
+                UserPrincipalName = $upn
+                DisplayName       = $displayName
+                OU                = $ou
+                Department        = $departmentKey
+                Site              = $siteKey
+                Title             = $Title
+                Manager           = $managerDn
+                Groups            = $groups.ToArray()
+            }
+        }
+
         try {
             $created = New-ADUser @newUserParams
         } catch {
             # New-ADUser adds the object first and sets the password second; if the second step
             # fails (e.g. a stricter fine-grained password policy) a disabled account is left.
             $message = "Failed to create user '{0}' (check whether a disabled account was left behind): {1}" -f $sam, $_.Exception.Message
+            if ($auditLog) {
+                Write-AdLifecycleAuditLog -Path $auditLog @logEntry -Applied $false -Errors $message -Connection $connection
+            }
             Write-Error -Message $message -Category WriteError -TargetObject $sam
             return
         }
@@ -261,15 +301,23 @@ function New-AdLifecycleUser {
         # $ErrorActionPreference = 'Stop') an error here would terminate the pipeline and the
         # only copy of the initial password would be lost. They are listed in FailedGroups.
         $failed = [System.Collections.Generic.List[string]]::new()
+        $warnings = [System.Collections.Generic.List[string]]::new()
         foreach ($group in $groups) {
             try {
                 Add-ADGroupMember -Identity $group -Members $member -Confirm:$false -ErrorAction Stop @connection
             } catch {
                 $failed.Add($group)
-                Write-Warning ("User '{0}' was created, but adding it to group '{1}' failed: {2}" -f $sam, $group, $_.Exception.Message)
+                $message = "User '{0}' was created, but adding it to group '{1}' failed: {2}" -f $sam, $group, $_.Exception.Message
+                $warnings.Add($message)
+                Write-Warning $message
             }
         }
         $result.FailedGroups = $failed.ToArray()
+
+        if ($auditLog) {
+            Write-AdLifecycleAuditLog -Path $auditLog @logEntry -DistinguishedName $result.DistinguishedName -Applied $true `
+                -FailedGroups $failed.ToArray() -Errors $warnings.ToArray() -Connection $connection
+        }
 
         $result
     }

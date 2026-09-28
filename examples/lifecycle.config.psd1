@@ -11,6 +11,10 @@
     # Length of generated initial passwords (12-128). Optional; default 16.
     PasswordLength = 16
 
+    # Audit log (JSON Lines): one line per user changed by the joiner, mover or leaver. Optional;
+    # -LogPath overrides it. The folder must exist.
+    # LogPath      = 'C:\ops\logs\ad-lifecycle.jsonl'
+
     # Site name -> OU where new user accounts for that site are created.
     Sites          = @{
         'Buenos Aires' = 'OU=Users,OU=Buenos Aires,OU=Sites,OU=Corp,DC=corp,DC=example'

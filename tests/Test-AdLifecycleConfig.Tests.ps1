@@ -59,6 +59,8 @@ Describe 'Test-AdLifecycleConfig' {
             @{ Case = 'a PasswordLength below 12'; Setting = 'PasswordLength'; Break = { param($c) $c.PasswordLength = 8 } }
             @{ Case = 'a PasswordLength above 128'; Setting = 'PasswordLength'; Break = { param($c) $c.PasswordLength = 256 } }
             @{ Case = 'a PasswordLength that is not a number'; Setting = 'PasswordLength'; Break = { param($c) $c.PasswordLength = 'sixteen' } }
+            @{ Case = 'an empty LogPath'; Setting = 'LogPath'; Break = { param($c) $c.LogPath = '' } }
+            @{ Case = 'a LogPath that is not a string'; Setting = 'LogPath'; Break = { param($c) $c.LogPath = @('a', 'b') } }
             @{ Case = 'an unknown setting (typo)'; Setting = 'DisableOU'; Break = { param($c) $c.DisableOU = 'OU=Disabled,DC=corp,DC=example' } }
         ) {
             $config = Get-ValidConfig

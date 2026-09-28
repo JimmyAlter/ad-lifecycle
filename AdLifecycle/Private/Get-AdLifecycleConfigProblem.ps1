@@ -21,7 +21,7 @@ function Get-AdLifecycleConfigProblem {
         [string]$Path = '(in memory)'
     )
 
-    $knownSettings = @('UpnSuffix', 'DisabledOU', 'PasswordLength', 'Sites', 'CommonGroups', 'Departments')
+    $knownSettings = @('UpnSuffix', 'DisabledOU', 'PasswordLength', 'Sites', 'CommonGroups', 'Departments', 'LogPath')
 
     # One or more OU=/CN= components (escaped characters such as "\," allowed) followed by DC= components.
     $dnPattern = '^(?:(?:OU|CN)=(?:[^,=+<>;\\"]|\\.)+,)+DC=[A-Za-z0-9-]+(?:,DC=[A-Za-z0-9-]+)*$'
@@ -122,6 +122,13 @@ function Get-AdLifecycleConfigProblem {
 
     if ($Config.Contains('CommonGroups')) {
         & $testGroupList 'CommonGroups' $Config['CommonGroups'] $true
+    }
+
+    if ($Config.Contains('LogPath')) {
+        $logPath = $Config['LogPath']
+        if ($logPath -isnot [string] -or [string]::IsNullOrWhiteSpace($logPath)) {
+            & $report 'LogPath' 'Must be a file path (the JSON Lines audit log), or be left out.'
+        }
     }
 
     $problems

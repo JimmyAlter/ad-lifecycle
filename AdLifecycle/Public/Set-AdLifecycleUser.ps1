@@ -67,6 +67,15 @@ function Set-AdLifecycleUser {
     .PARAMETER Credential
         Account to connect to Active Directory as. Defaults to the current user.
 
+    .PARAMETER Ticket
+        Optional ticket or request id (letters, digits and # . / - _; up to 64 characters),
+        recorded in the audit log.
+
+    .PARAMETER LogPath
+        Optional audit log file: one JSON line per user changed (UTC timestamp, operator, ticket,
+        planned changes, result). Overrides LogPath from the configuration. The folder must
+        exist. Nothing is logged under -WhatIf.
+
     .EXAMPLE
         Set-AdLifecycleUser -Identity jpena -Department Sales -ConfigPath .\lifecycle.config.psd1 -WhatIf
 
@@ -115,6 +124,15 @@ function Set-AdLifecycleUser {
         [ValidateNotNullOrEmpty()]
         [string]$ConfigPath,
 
+        [Parameter(ValueFromPipelineByPropertyName)]
+        [AllowEmptyString()]
+        [AllowNull()]
+        [ValidatePattern('^([\w#./-]{1,64})?$')]
+        [string]$Ticket,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$LogPath,
+
         [ValidateNotNullOrEmpty()]
         [string]$Server,
 
@@ -152,6 +170,7 @@ function Set-AdLifecycleUser {
         }
 
         $connection = Get-AdLifecycleConnection -Server $Server -Credential $Credential -DiscoverWritable
+        $auditLog = Resolve-AdLifecycleLogPath -LogPath $LogPath -Config $config
 
         $managerDn = $null
         if ($Manager) {
@@ -314,45 +333,76 @@ function Set-AdLifecycleUser {
             return
         }
 
-        # Add first, then remove: the user is never left without the access of either department.
+        # Everything below changes AD; the finally block writes the audit log line even when a
+        # caller's -ErrorAction Stop turns one of the errors into a terminating one.
         $failed = [System.Collections.Generic.List[string]]::new()
-        foreach ($group in $toAdd) {
-            try {
-                Add-ADGroupMember -Identity $group -Members $userDn -Confirm:$false -ErrorAction Stop @connection
-            } catch {
-                $failed.Add($group)
-                Write-Error -Message ("Adding '{0}' to group '{1}' failed: {2}" -f $user.SamAccountName, $group, $_.Exception.Message) -Category WriteError -TargetObject $group
+        $errors = [System.Collections.Generic.List[string]]::new()
+        try {
+            # Add first, then remove: the user is never left without the access of either department.
+            foreach ($group in $toAdd) {
+                try {
+                    Add-ADGroupMember -Identity $group -Members $userDn -Confirm:$false -ErrorAction Stop @connection
+                } catch {
+                    $failed.Add($group)
+                    $message = "Adding '{0}' to group '{1}' failed: {2}" -f $user.SamAccountName, $group, $_.Exception.Message
+                    $errors.Add($message)
+                    Write-Error -Message $message -Category WriteError -TargetObject $group
+                }
             }
-        }
-        foreach ($group in $toRemove) {
-            try {
-                Remove-ADGroupMember -Identity $group -Members $userDn -Confirm:$false -ErrorAction Stop @connection
-            } catch {
-                $failed.Add($group)
-                Write-Error -Message ("Removing '{0}' from group '{1}' failed: {2}" -f $user.SamAccountName, $group, $_.Exception.Message) -Category WriteError -TargetObject $group
+            foreach ($group in $toRemove) {
+                try {
+                    Remove-ADGroupMember -Identity $group -Members $userDn -Confirm:$false -ErrorAction Stop @connection
+                } catch {
+                    $failed.Add($group)
+                    $message = "Removing '{0}' from group '{1}' failed: {2}" -f $user.SamAccountName, $group, $_.Exception.Message
+                    $errors.Add($message)
+                    Write-Error -Message $message -Category WriteError -TargetObject $group
+                }
             }
-        }
-        $result.FailedGroups = $failed.ToArray()
-        $result.Applied = $true
+            $result.FailedGroups = $failed.ToArray()
+            $result.Applied = $true
 
-        if ($attributes.Count -gt 0) {
-            try {
-                Set-ADUser -Identity $userDn @attributes -Confirm:$false -ErrorAction Stop @connection
-            } catch {
-                Write-Error -Message ("Setting {0} of '{1}' failed: {2}" -f (($attributes.Keys | Sort-Object) -join ', '), $user.SamAccountName, $_.Exception.Message) -Category WriteError -TargetObject $Identity
+            if ($attributes.Count -gt 0) {
+                try {
+                    Set-ADUser -Identity $userDn @attributes -Confirm:$false -ErrorAction Stop @connection
+                } catch {
+                    $message = "Setting {0} of '{1}' failed: {2}" -f (($attributes.Keys | Sort-Object) -join ', '), $user.SamAccountName, $_.Exception.Message
+                    $errors.Add($message)
+                    Write-Error -Message $message -Category WriteError -TargetObject $Identity
+                }
+            }
+
+            # The move changes the DN, so it goes last.
+            if ($needsMove) {
+                try {
+                    Move-ADObject -Identity $userDn -TargetPath $targetOu -Confirm:$false -ErrorAction Stop @connection
+                    $result.DistinguishedName = '{0},{1}' -f $rdn, $targetOu
+                } catch {
+                    $message = "Moving '{0}' to '{1}' failed: {2}" -f $user.SamAccountName, $targetOu, $_.Exception.Message
+                    $errors.Add($message)
+                    Write-Error -Message $message -Category WriteError -TargetObject $Identity
+                }
+            }
+
+            $result
+        } finally {
+            if ($auditLog) {
+                $moveTo = $null
+                if ($needsMove) {
+                    $moveTo = $targetOu
+                }
+                $changes = [ordered]@{
+                    FromDepartment = $result.FromDepartment
+                    ToDepartment   = $result.ToDepartment
+                    AddGroups      = @($toAdd)
+                    RemoveGroups   = @($toRemove)
+                    Attributes     = $attributes
+                    MoveTo         = $moveTo
+                }
+                Write-AdLifecycleAuditLog -Path $auditLog -Command 'Set-AdLifecycleUser' -Target ([string]$user.SamAccountName) `
+                    -DistinguishedName $userDn -Ticket $Ticket -Changes $changes -Applied $result.Applied `
+                    -FailedGroups $failed.ToArray() -Errors $errors.ToArray() -Connection $connection
             }
         }
-
-        # The move changes the DN, so it goes last.
-        if ($needsMove) {
-            try {
-                Move-ADObject -Identity $userDn -TargetPath $targetOu -Confirm:$false -ErrorAction Stop @connection
-                $result.DistinguishedName = '{0},{1}' -f $rdn, $targetOu
-            } catch {
-                Write-Error -Message ("Moving '{0}' to '{1}' failed: {2}" -f $user.SamAccountName, $targetOu, $_.Exception.Message) -Category WriteError -TargetObject $Identity
-            }
-        }
-
-        $result
     }
 }

@@ -212,6 +212,40 @@ alone. Computers that never logged on are listed only if they were created befor
 (so yesterday's pre-staged machines do not show up) and are flagged with `NeverLoggedOn`. It
 only reports; what to do with the list is up to you.
 
+### Audit log
+
+With `-LogPath` (or `LogPath` in the configuration), the joiner, mover and leaver append one JSON
+line per user they change (JSON Lines, UTF-8 without BOM), after the change, including partial
+failures and a failed create or disable. Nothing is logged under `-WhatIf`, and initial
+passwords are never logged. `-Ticket` is mandatory for the leaver and optional for the joiner
+(also from a `Ticket` CSV column) and the mover.
+
+```powershell
+New-AdLifecycleUser -GivenName 'Lucía' -Surname 'Muñoz' -Department Finance -Site Madrid -Title Accountant `
+    -Ticket RITM0001 -LogPath C:\ops\logs\ad-lifecycle.jsonl
+Get-Content C:\ops\logs\ad-lifecycle.jsonl | ConvertFrom-Json | Where-Object Ticket -EQ 'RITM0001'
+```
+
+Each line has `TimestampUtc`, `Operator` (the Windows user), `CredentialUser` (with
+`-Credential`), `Server`, `Command`, `Target`, `DistinguishedName`, `Ticket`, `Changes` (what was
+planned: groups, OU, attributes), `Applied`, `FailedGroups` and `Errors`. A joiner line looks like
+this (wrapped here):
+
+```json
+{"TimestampUtc":"2026-09-28T13:05:12.418Z","Operator":"CORP\\it.admin","CredentialUser":null,
+ "Server":"dc01.corp.example","Command":"New-AdLifecycleUser","Target":"lmunoz",
+ "DistinguishedName":"CN=Lucía Muñoz,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example",
+ "Ticket":"RITM0001","Changes":{"SamAccountName":"lmunoz","UserPrincipalName":"lmunoz@corp.example",
+ "DisplayName":"Lucía Muñoz","OU":"OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example",
+ "Department":"Finance","Site":"Madrid","Title":"Accountant","Manager":null,
+ "Groups":["GG-All-Staff","GG-VPN-Users","GG-Finance","GG-Share-Finance-RW","GG-App-ERP","GG-Reporting-Read"]},
+ "Applied":true,"FailedGroups":[],"Errors":[]}
+```
+
+The folder must exist; if it does not, the command stops before touching AD. If a line cannot be
+written after a change was made, the command writes a warning (not an error), so the joiner still
+returns the initial password.
+
 ## Configuration
 
 See [`examples/lifecycle.config.psd1`](examples/lifecycle.config.psd1). One file per domain.
@@ -224,6 +258,7 @@ See [`examples/lifecycle.config.psd1`](examples/lifecycle.config.psd1). One file
 | `Departments` | Yes | Department name = list of group `sAMAccountName`s. |
 | `CommonGroups` | No | Groups every joiner gets. Not touched by the mover. |
 | `PasswordLength` | No | Initial password length, 12-128. Default 16. |
+| `LogPath` | No | Audit log file (JSON Lines). `-LogPath` overrides it. |
 
 ```powershell
 @{

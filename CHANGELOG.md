@@ -24,6 +24,12 @@ version is 0, a minor version may contain breaking changes; they are called out 
   all planned and confirmed together with the department change in a single `ShouldProcess`
   per user. `AdLifecycle.MoverResult` gains `PreviousTitle`, `Title`, `PreviousManager`,
   `Manager`, `PreviousOU` and `TargetOU`.
+- Audit log: `-LogPath` on the joiner, mover and leaver (or `LogPath` in the configuration)
+  appends one JSON line per user changed: UTC timestamp, operator, credential user, DC,
+  command, target, ticket, planned changes, `Applied`, failed groups and errors. Never contains
+  passwords; nothing is written under `-WhatIf`.
+- Optional `-Ticket` on `New-AdLifecycleUser` (also from a `Ticket` CSV column) and
+  `Set-AdLifecycleUser`, recorded in the audit log.
 
 ### Changed
 

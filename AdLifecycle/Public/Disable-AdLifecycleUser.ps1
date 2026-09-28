@@ -61,6 +61,11 @@ function Disable-AdLifecycleUser {
         groups such as Domain Admins). It does not lift the refusal for the built-in Administrator
         (RID 500), krbtgt (RID 502) or your own account, and it does not skip the confirmation.
 
+    .PARAMETER LogPath
+        Optional audit log file: one JSON line per offboarded user (UTC timestamp, operator,
+        ticket, planned changes, result). Overrides LogPath from the configuration. The folder
+        must exist. Nothing is logged under -WhatIf.
+
     .EXAMPLE
         Disable-AdLifecycleUser -Identity jpena -Ticket INC-4821 -ConfigPath .\lifecycle.config.psd1 -WhatIf
 
@@ -102,6 +107,9 @@ function Disable-AdLifecycleUser {
         [switch]$Force,
 
         [ValidateNotNullOrEmpty()]
+        [string]$LogPath,
+
+        [ValidateNotNullOrEmpty()]
         [string]$Server,
 
         [System.Management.Automation.PSCredential]
@@ -120,11 +128,8 @@ function Disable-AdLifecycleUser {
         $today = $now.ToString('yyyy-MM-dd', $invariant)
         $recordedAt = $now.ToString('yyyy-MM-dd HH:mm:ss', $invariant)
 
-        $operator = [Environment]::UserName
-        $userDomain = [Environment]::UserDomainName
-        if ($userDomain -and $userDomain -ne [Environment]::MachineName) {
-            $operator = '{0}\{1}' -f $userDomain, $operator
-        }
+        $operator = Get-AdLifecycleOperator
+        $auditLog = Resolve-AdLifecycleLogPath -LogPath $LogPath -Config $config
 
         $callerSid = Get-AdLifecycleCallerSid
         # With -Credential the AD calls run as that account: protect it as well.
@@ -270,42 +275,73 @@ function Disable-AdLifecycleUser {
             $result.ExportPath = $ExportPath
         }
 
-        try {
-            Disable-ADAccount -Identity $userDn -Confirm:$false -ErrorAction Stop @connection
-        } catch {
-            Write-Error -Message ("Failed to disable '{0}'; no other changes were made: {1}" -f $userDn, $_.Exception.Message) -Category WriteError -TargetObject $Identity
-            return
-        }
-        $result.Applied = $true
-
-        try {
-            Set-ADUser -Identity $userDn -Description $description -Confirm:$false -ErrorAction Stop @connection
-        } catch {
-            Write-Error -Message ("'{0}' is disabled, but setting the description failed: {1}" -f $userDn, $_.Exception.Message) -Category WriteError -TargetObject $Identity
-        }
-
+        # Everything below changes AD; the finally block writes the audit log line even when a
+        # caller's -ErrorAction Stop turns one of the errors into a terminating one.
+        $errors = [System.Collections.Generic.List[string]]::new()
         $removed = [System.Collections.Generic.List[string]]::new()
         $failed = [System.Collections.Generic.List[string]]::new()
-        foreach ($group in $toRemove) {
+        try {
             try {
-                Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userDn -Confirm:$false -ErrorAction Stop @connection
-                $removed.Add($group.Name)
+                Disable-ADAccount -Identity $userDn -Confirm:$false -ErrorAction Stop @connection
             } catch {
-                $failed.Add($group.Name)
-                Write-Error -Message ("'{0}' is disabled, but removing it from group '{1}' failed: {2}" -f $userDn, $group.Name, $_.Exception.Message) -Category WriteError -TargetObject $group.Name
+                $message = "Failed to disable '{0}'; no other changes were made: {1}" -f $userDn, $_.Exception.Message
+                $errors.Add($message)
+                Write-Error -Message $message -Category WriteError -TargetObject $Identity
+                return
+            }
+            $result.Applied = $true
+
+            try {
+                Set-ADUser -Identity $userDn -Description $description -Confirm:$false -ErrorAction Stop @connection
+            } catch {
+                $message = "'{0}' is disabled, but setting the description failed: {1}" -f $userDn, $_.Exception.Message
+                $errors.Add($message)
+                Write-Error -Message $message -Category WriteError -TargetObject $Identity
+            }
+
+            foreach ($group in $toRemove) {
+                try {
+                    Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userDn -Confirm:$false -ErrorAction Stop @connection
+                    $removed.Add($group.Name)
+                } catch {
+                    $failed.Add($group.Name)
+                    $message = "'{0}' is disabled, but removing it from group '{1}' failed: {2}" -f $userDn, $group.Name, $_.Exception.Message
+                    $errors.Add($message)
+                    Write-Error -Message $message -Category WriteError -TargetObject $group.Name
+                }
+            }
+            $result.RemovedGroups = $removed.ToArray()
+            $result.FailedGroups = $failed.ToArray()
+
+            if ($needsMove) {
+                try {
+                    Move-ADObject -Identity $userDn -TargetPath $disabledOu -Confirm:$false -ErrorAction Stop @connection
+                } catch {
+                    $message = "'{0}' is disabled, but moving it to '{1}' failed: {2}" -f $userDn, $disabledOu, $_.Exception.Message
+                    $errors.Add($message)
+                    Write-Error -Message $message -Category WriteError -TargetObject $Identity
+                }
+            }
+
+            $result
+        } finally {
+            if ($auditLog) {
+                $moveTo = $null
+                if ($needsMove) {
+                    $moveTo = $disabledOu
+                }
+                $changes = [ordered]@{
+                    Disable      = $true
+                    Description  = $description
+                    RemoveGroups = @($toRemove | ForEach-Object { $_.Name })
+                    KeptGroups   = @($kept | ForEach-Object { $_.Name })
+                    MoveTo       = $moveTo
+                    ExportPath   = $result.ExportPath
+                }
+                Write-AdLifecycleAuditLog -Path $auditLog -Command 'Disable-AdLifecycleUser' -Target ([string]$user.SamAccountName) `
+                    -DistinguishedName $userDn -Ticket $Ticket -Changes $changes -Applied $result.Applied `
+                    -FailedGroups $failed.ToArray() -Errors $errors.ToArray() -Connection $connection
             }
         }
-        $result.RemovedGroups = $removed.ToArray()
-        $result.FailedGroups = $failed.ToArray()
-
-        if ($needsMove) {
-            try {
-                Move-ADObject -Identity $userDn -TargetPath $disabledOu -Confirm:$false -ErrorAction Stop @connection
-            } catch {
-                Write-Error -Message ("'{0}' is disabled, but moving it to '{1}' failed: {2}" -f $userDn, $disabledOu, $_.Exception.Message) -Category WriteError -TargetObject $Identity
-            }
-        }
-
-        $result
     }
 }
