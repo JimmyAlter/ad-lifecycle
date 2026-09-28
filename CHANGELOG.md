@@ -14,6 +14,9 @@ version is 0, a minor version may contain breaking changes; they are called out 
   `PSEdition_Core` tags.
 - `-Server` and `-Credential` on `New-AdLifecycleUser`, `Set-AdLifecycleDepartment`,
   `Disable-AdLifecycleUser` and `Get-AdStaleComputer`.
+- Leaver safety guard: `Disable-AdLifecycleUser` refuses the built-in Administrator (RID 500),
+  krbtgt (RID 502) and the caller's own account (Windows identity or `-Credential` user), and
+  accounts with `adminCount = 1` unless `-Force` is given.
 
 ### Changed
 
