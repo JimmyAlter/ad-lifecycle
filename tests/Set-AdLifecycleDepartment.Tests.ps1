@@ -14,16 +14,20 @@ Describe 'Set-AdLifecycleDepartment' {
         $expectedAdded = @('GG-Sales', 'GG-Share-Sales-RW', 'GG-App-CRM')
         $expectedRemoved = @('GG-Finance', 'GG-Share-Finance-RW', 'GG-App-ERP')
 
-        Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'jpena' } -MockWith {
-            [pscustomobject]@{ SamAccountName = 'jpena'; DistinguishedName = $userDn; Department = 'Finance' }
+        function Get-TestGroupDn {
+            param([string[]]$Name)
+            $Name | ForEach-Object { "CN=$_,OU=Groups,OU=Corp,DC=corp,DC=example" }
         }
+
         # jpena never got GG-App-ERP, so there is nothing to remove for that one.
-        Mock Get-ADPrincipalGroupMembership -ModuleName AdLifecycle -ParameterFilter { $Identity -eq $userDn } -MockWith {
-            New-TestAdGroup -Name 'Domain Users' -Rid 513
-            New-TestAdGroup -Name 'GG-All-Staff' -Rid 1101
-            New-TestAdGroup -Name 'GG-Finance' -Rid 1102
-            New-TestAdGroup -Name 'GG-Share-Finance-RW' -Rid 1104
-            New-TestAdGroup -Name 'GG-Reporting-Read' -Rid 1105
+        Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'jpena' } -MockWith {
+            New-TestAdUser -SamAccountName 'jpena' -DistinguishedName $userDn `
+                -MemberOf (Get-TestGroupDn 'GG-All-Staff', 'GG-Finance', 'GG-Share-Finance-RW', 'GG-Reporting-Read') `
+                -Property @{ Department = 'Finance' }
+        }
+        # Every template group exists; the mover resolves them by sAMAccountName.
+        Mock Get-ADGroup -ModuleName AdLifecycle -MockWith {
+            [pscustomobject]@{ Name = $Identity; SamAccountName = $Identity; DistinguishedName = (Get-TestGroupDn $Identity) }
         }
     }
 
@@ -102,9 +106,8 @@ Describe 'Set-AdLifecycleDepartment' {
         }
 
         It 'skips groups the user already has' {
-            Mock Get-ADPrincipalGroupMembership -ModuleName AdLifecycle -ParameterFilter { $Identity -eq $userDn } -MockWith {
-                New-TestAdGroup -Name 'GG-Finance' -Rid 1102
-                New-TestAdGroup -Name 'GG-Sales' -Rid 1201
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'jpena' } -MockWith {
+                New-TestAdUser -SamAccountName 'jpena' -DistinguishedName $userDn -MemberOf (Get-TestGroupDn 'GG-Finance', 'GG-Sales') -Property @{ Department = 'Finance' }
             }
             Set-AdLifecycleDepartment @mover -Confirm:$false | Out-Null
 
@@ -174,17 +177,26 @@ Describe 'Set-AdLifecycleDepartment' {
             Should -Invoke Remove-ADGroupMember -ModuleName AdLifecycle -Times 0 -Exactly
         }
 
-        It 'changes nothing when the memberships cannot be read' {
-            Mock Get-ADPrincipalGroupMembership -ModuleName AdLifecycle -ParameterFilter { $Identity -eq $userDn } -MockWith {
-                throw 'The server is not operational'
-            }
+        It 'changes nothing when a template group cannot be resolved (<Case>)' -ForEach @(
+            @{ Case = 'lookup fails'; Behavior = { throw 'The server is not operational' }; Message = '*not operational*' }
+            @{ Case = 'no such group'; Behavior = { }; Message = "*Group 'GG-App-CRM' was not found*" }
+        ) {
+            Mock Get-ADGroup -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'GG-App-CRM' } -MockWith $Behavior
 
             $run = Invoke-Captured { Set-AdLifecycleDepartment @mover -Confirm:$false -ErrorAction Continue }
 
             $run.Output | Should -BeNullOrEmpty
-            "$($run.Errors[0])" | Should -BeLike '*Could not read the group memberships*nothing was changed*'
+            "$($run.Errors[0])" | Should -BeLike '*Could not resolve the template groups*nothing was changed*'
+            "$($run.Errors[0])" | Should -BeLike $Message
             Should -Invoke Add-ADGroupMember -ModuleName AdLifecycle -Times 0 -Exactly
             Should -Invoke Set-ADUser -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+
+        It 'compares memberships by DN from memberOf, not Get-ADPrincipalGroupMembership' {
+            Set-AdLifecycleDepartment @mover -WhatIf | Out-Null
+
+            Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Properties -contains 'MemberOf' }
+            Should -Invoke Get-ADGroup -ModuleName AdLifecycle -Times 6 -Exactly
         }
 
         It 'writes an error for an unknown user' {

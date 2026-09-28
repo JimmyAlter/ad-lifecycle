@@ -164,7 +164,10 @@ Applied       : False
 
 `-Ticket` is mandatory. The primary group and Domain Users are kept, matched by RID (the
 `primaryGroupID` and 513) rather than by name, so it also works on localized domains
-("Usuarios del dominio"). For bulk leavers, keep a record of what was removed:
+("Usuarios del dominio"). Memberships come from the user's `memberOf` and `primaryGroupID`
+rather than `Get-ADPrincipalGroupMembership`, which fails outright for users in groups that
+contain foreign security principals (members from trusted domains). For bulk leavers, keep a
+record of what was removed:
 
 ```powershell
 Import-Csv .\leavers.csv | Disable-AdLifecycleUser -ExportPath .\removed-memberships.csv

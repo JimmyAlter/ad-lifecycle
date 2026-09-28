@@ -50,9 +50,9 @@ $AdStubDefinitions = [ordered]@{
         param($Identity, $TargetPath, [switch]$PassThru, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
-    'Get-ADPrincipalGroupMembership' = {
+    'Get-ADGroup'                    = {
         [CmdletBinding()]
-        param($Identity, $Server, $Credential)
+        param($Identity, $Filter, $LDAPFilter, $Properties, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
     'Add-ADGroupMember'              = {
@@ -77,6 +77,7 @@ $AdStubDefinitions = [ordered]@{
     }
 }
 $TestDomainController = 'dc01.corp.example'
+$TestDomainSid = 'S-1-5-21-1004336348-1177238915-682003330'
 $AdCommandNames = @($AdStubDefinitions.Keys)
 $AdWriteCommandNames = @($AdCommandNames | Where-Object { $_ -notlike 'Get-*' })
 
@@ -131,4 +132,29 @@ function New-TestAdGroup {
 function ConvertFrom-TestSecureString {
     param([Parameter(Mandatory)][securestring]$SecureString)
     [System.Net.NetworkCredential]::new('', $SecureString).Password
+}
+
+# A user as Get-ADUser returns it with -Properties Description, PrimaryGroupID, MemberOf, ...
+# -Property adds or overrides attributes (Department, Title, Manager, adminCount, Enabled, ...).
+function New-TestAdUser {
+    param(
+        [Parameter(Mandatory)][string]$SamAccountName,
+        [Parameter(Mandatory)][string]$DistinguishedName,
+        [int]$Rid = 1601,
+        [int]$PrimaryGroupID = 513,
+        [string[]]$MemberOf = @(),
+        [hashtable]$Property = @{}
+    )
+    $user = [ordered]@{
+        SamAccountName    = $SamAccountName
+        DistinguishedName = $DistinguishedName
+        SID               = "S-1-5-21-1004336348-1177238915-682003330-$Rid"
+        PrimaryGroupID    = $PrimaryGroupID
+        MemberOf          = @($MemberOf)
+        Enabled           = $true
+    }
+    foreach ($key in $Property.Keys) {
+        $user[$key] = $Property[$key]
+    }
+    [pscustomobject]$user
 }

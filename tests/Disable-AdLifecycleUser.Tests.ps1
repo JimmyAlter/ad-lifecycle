@@ -16,19 +16,18 @@ Describe 'Disable-AdLifecycleUser' {
             New-TestAdGroup -Name 'GG-Finance' -Rid 1102
             New-TestAdGroup -Name 'GG-Compañía-Read' -Rid 1103
         )
-        $memberships = @($domainUsers) + $groupsToRemove
+        $contractors = New-TestAdGroup -Name 'GG-Contractors' -Rid 1150
+        $knownGroups = @($domainUsers, $contractors) + $groupsToRemove
 
+        # Domain Users is the primary group, so memberOf does not list it.
         Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'lmunoz' } -MockWith {
-            [pscustomobject]@{
-                SamAccountName    = 'lmunoz'
-                DistinguishedName = $userDn
-                PrimaryGroupID    = 513
-                Description       = 'Accountant'
-                Enabled           = $true
+            New-TestAdUser -SamAccountName 'lmunoz' -DistinguishedName $userDn -MemberOf $groupsToRemove.DistinguishedName -Property @{
+                Description = 'Accountant'
             }
         }
-        Mock Get-ADPrincipalGroupMembership -ModuleName AdLifecycle -ParameterFilter { $Identity -eq $userDn } -MockWith {
-            $memberships
+        # Groups by SID (<domain SID>-<RID>), as the leaver resolves the primary group and Domain Users.
+        Mock Get-ADGroup -ModuleName AdLifecycle -MockWith {
+            $knownGroups | Where-Object { $_.SID -eq $Identity }
         }
         Mock Get-Date -ModuleName AdLifecycle -MockWith { [datetime]::new(2026, 1, 31, 9, 30, 0) }
     }
@@ -179,13 +178,10 @@ Describe 'Disable-AdLifecycleUser' {
         }
 
         It 'keeps a non-default primary group as well as Domain Users' {
-            $contractors = New-TestAdGroup -Name 'GG-Contractors' -Rid 1150
-            $finance = New-TestAdGroup -Name 'GG-Finance' -Rid 1102
+            # With another primary group, Domain Users shows up in memberOf like any other group.
             Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'contractor1' } -MockWith {
-                [pscustomobject]@{ SamAccountName = 'contractor1'; DistinguishedName = 'CN=Contractor One,OU=Users,OU=Remote,OU=Sites,OU=Corp,DC=corp,DC=example'; PrimaryGroupID = 1150 }
-            }
-            Mock Get-ADPrincipalGroupMembership -ModuleName AdLifecycle -ParameterFilter { $Identity -like 'CN=Contractor One,*' } -MockWith {
-                $contractors, $domainUsers, $finance
+                New-TestAdUser -SamAccountName 'contractor1' -DistinguishedName 'CN=Contractor One,OU=Users,OU=Remote,OU=Sites,OU=Corp,DC=corp,DC=example' `
+                    -Rid 1602 -PrimaryGroupID 1150 -MemberOf $domainUsers.DistinguishedName, $groupsToRemove[1].DistinguishedName
             }
 
             $result = Disable-AdLifecycleUser -Identity contractor1 -Ticket 'RITM0012345' -ConfigPath $ExampleConfigPath -Confirm:$false
@@ -197,13 +193,12 @@ Describe 'Disable-AdLifecycleUser' {
 
         It 'keeps Domain Users by RID even when the name is localized' {
             $usuarios = New-TestAdGroup -Name 'Usuarios del dominio' -Rid 513
-            Mock Get-ADPrincipalGroupMembership -ModuleName AdLifecycle -ParameterFilter { $Identity -eq $userDn } -MockWith {
-                $usuarios, $groupsToRemove[0]
-            }
+            Mock Get-ADGroup -ModuleName AdLifecycle -ParameterFilter { $Identity -eq $usuarios.SID } -MockWith { $usuarios }
 
             $result = Disable-AdLifecycleUser @leaver -Confirm:$false
 
             $result.KeptGroups | Should -Be @('Usuarios del dominio')
+            Should -Invoke Get-ADGroup -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Identity -eq "$TestDomainSid-513" }
             Should -Invoke Remove-ADGroupMember -ModuleName AdLifecycle -Times 0 -Exactly -ParameterFilter {
                 $Identity -eq $usuarios.DistinguishedName
             }
@@ -211,7 +206,7 @@ Describe 'Disable-AdLifecycleUser' {
 
         It 'does not move an account that is already in the disabled OU' {
             Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'old1' } -MockWith {
-                [pscustomobject]@{ SamAccountName = 'old1'; DistinguishedName = "CN=Old One,$disabledOu"; PrimaryGroupID = 513 }
+                New-TestAdUser -SamAccountName 'old1' -DistinguishedName "CN=Old One,$disabledOu" -Rid 1603
             }
             Disable-AdLifecycleUser -Identity old1 -Ticket 'INC-1' -ConfigPath $ExampleConfigPath -Confirm:$false | Out-Null
 
@@ -233,16 +228,55 @@ Describe 'Disable-AdLifecycleUser' {
         }
 
         It 'changes nothing when the memberships cannot be read' {
-            Mock Get-ADPrincipalGroupMembership -ModuleName AdLifecycle -ParameterFilter { $Identity -eq $userDn } -MockWith {
-                throw 'The server is not operational'
-            }
+            Mock Get-ADGroup -ModuleName AdLifecycle -MockWith { throw 'The server is not operational' }
 
             $run = Invoke-Captured { Disable-AdLifecycleUser @leaver -Confirm:$false -ErrorAction Continue }
 
             $run.Output | Should -BeNullOrEmpty
-            "$($run.Errors[0])" | Should -BeLike '*Could not read the group memberships*nothing was changed*'
+            "$($run.Errors[0])" | Should -BeLike '*Could not read the group memberships*nothing was changed*not operational*'
             Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
             Should -Invoke Remove-ADGroupMember -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+
+        It 'reads memberships from memberOf and primaryGroupID, not Get-ADPrincipalGroupMembership' {
+            Disable-AdLifecycleUser @leaver -WhatIf | Out-Null
+
+            Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+                $Identity -eq 'lmunoz' -and $Properties -contains 'MemberOf' -and $Properties -contains 'PrimaryGroupID'
+            }
+            Should -Invoke Get-ADGroup -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Identity -eq "$TestDomainSid-513" }
+        }
+
+        It 'names memberOf groups after their RDN, unescaping special characters' {
+            $odd = 'CN=GG-Sales\, Madrid \+ Remote,OU=Groups,OU=Corp,DC=corp,DC=example'
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'lmunoz' } -MockWith {
+                New-TestAdUser -SamAccountName 'lmunoz' -DistinguishedName $userDn -MemberOf $odd
+            }
+
+            $result = Disable-AdLifecycleUser @leaver -Confirm:$false
+
+            $result.RemovedGroups | Should -Be @('GG-Sales, Madrid + Remote')
+            Should -Invoke Remove-ADGroupMember -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Identity -eq $odd }
+        }
+
+        It 'changes nothing when the primary group cannot be resolved' {
+            Mock Get-ADGroup -ModuleName AdLifecycle -MockWith { }
+
+            $run = Invoke-Captured { Disable-AdLifecycleUser @leaver -Confirm:$false -ErrorAction Continue }
+
+            "$($run.Errors[0])" | Should -BeLike '*Could not read the group memberships*RID 513 was not found*'
+            Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+
+        It 'changes nothing when the user SID is not a domain SID' {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'lmunoz' } -MockWith {
+                New-TestAdUser -SamAccountName 'lmunoz' -DistinguishedName $userDn -Property @{ SID = 'S-1-5-32-544' }
+            }
+
+            $run = Invoke-Captured { Disable-AdLifecycleUser @leaver -Confirm:$false -ErrorAction Continue }
+
+            "$($run.Errors[0])" | Should -BeLike "*Unexpected SID 'S-1-5-32-544'*"
+            Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
         }
 
         It 'reports a failed description update or move but still returns the result' {

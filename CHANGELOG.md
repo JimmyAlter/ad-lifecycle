@@ -20,6 +20,10 @@ version is 0, a minor version may contain breaking changes; they are called out 
 - The three write commands pin one writable domain controller per run
   (`Get-ADDomainController -Discover -Writable`, or `-Server`) and send every AD call to it. This
   fixes joiner group adds that could fail on a DC that had not replicated the new account yet.
+- The leaver and the mover read group memberships from the user's `memberOf` (and, for the
+  leaver, `primaryGroupID`) instead of `Get-ADPrincipalGroupMembership`, which fails for users
+  in groups that contain foreign security principals. The mover now resolves every template
+  group it adds or removes before changing anything, and stops for that user if one is missing.
 
 ## [0.1.0] - 2026-09-25
 

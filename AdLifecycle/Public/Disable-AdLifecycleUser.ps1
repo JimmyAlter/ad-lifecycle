@@ -13,6 +13,9 @@ function Disable-AdLifecycleUser {
         3. Sets the description to "Disabled yyyy-MM-dd by <operator> - ticket <id>".
         4. Removes every group membership except the primary group and Domain Users. Both are
            matched by RID (primaryGroupID and 513), not by name, so localized domains work.
+           Memberships are read from the user's memberOf and primaryGroupID, not with
+           Get-ADPrincipalGroupMembership, which fails for users in groups that contain foreign
+           security principals.
         5. Moves the account to DisabledOU from the configuration (skipped if already there).
 
         -Ticket is mandatory: every leaver is traceable to a request. ConfirmImpact is High, so
@@ -109,7 +112,7 @@ function Disable-AdLifecycleUser {
 
     process {
         try {
-            $user = Get-ADUser -Identity $Identity -Properties Description, PrimaryGroupID -ErrorAction Stop @connection
+            $user = Get-ADUser -Identity $Identity -Properties Description, PrimaryGroupID, MemberOf -ErrorAction Stop @connection
             if (-not $user -or -not $user.DistinguishedName) {
                 throw 'No such user.'
             }
@@ -120,7 +123,7 @@ function Disable-AdLifecycleUser {
         $userDn = [string]$user.DistinguishedName
 
         try {
-            $memberships = @(Get-ADPrincipalGroupMembership -Identity $userDn -ErrorAction Stop @connection)
+            $memberships = @(Get-AdLifecycleUserGroup -User $user -Connection $connection)
         } catch {
             Write-Error -Message ("Could not read the group memberships of '{0}'; nothing was changed: {1}" -f $userDn, $_.Exception.Message) -Category ReadError -TargetObject $Identity
             return
@@ -128,18 +131,8 @@ function Disable-AdLifecycleUser {
 
         # The primary group cannot be removed (AD refuses) and Domain Users is kept on purpose.
         # Both are matched by RID so this also works when "Domain Users" is localized.
-        $primaryRid = '513'
-        if ($user.PrimaryGroupID) {
-            $primaryRid = [string]$user.PrimaryGroupID
-        }
-        $isKept = {
-            param([object]$Group)
-            $sid = [string]$Group.SID
-            $rid = $sid.Substring($sid.LastIndexOf('-') + 1)
-            $rid -eq $primaryRid -or $rid -eq '513'
-        }
-        $kept = @($memberships | Where-Object { & $isKept $_ })
-        $toRemove = @($memberships | Where-Object { -not (& $isKept $_) })
+        $kept = @($memberships | Where-Object { $_.IsPrimary -or $_.IsDomainUsers })
+        $toRemove = @($memberships | Where-Object { -not ($_.IsPrimary -or $_.IsDomainUsers) })
 
         $description = 'Disabled {0} by {1} - ticket {2}' -f $today, $operator, $Ticket
         $parentDn = $userDn -replace '^(?:[^,\\]|\\.)+,', ''
@@ -191,7 +184,7 @@ function Disable-AdLifecycleUser {
                     UserDistinguishedName  = $userDn
                     GroupName              = $group.Name
                     GroupDistinguishedName = $group.DistinguishedName
-                    Kept                   = [bool](& $isKept $group)
+                    Kept                   = [bool]($group.IsPrimary -or $group.IsDomainUsers)
                     Ticket                 = $Ticket
                     Operator               = $operator
                     RecordedAt             = $recordedAt

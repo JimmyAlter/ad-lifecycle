@@ -103,7 +103,7 @@ function Set-AdLifecycleDepartment {
 
     process {
         try {
-            $user = Get-ADUser -Identity $Identity -Properties Department -ErrorAction Stop @connection
+            $user = Get-ADUser -Identity $Identity -Properties Department, MemberOf -ErrorAction Stop @connection
             if (-not $user -or -not $user.DistinguishedName) {
                 throw 'No such user.'
             }
@@ -149,10 +149,23 @@ function Set-AdLifecycleDepartment {
             return
         }
 
+        # Resolve every template group involved to its DN and compare with the user's memberOf.
+        # (Get-ADPrincipalGroupMembership is not used: it fails for users in groups that contain
+        # foreign security principals.) A group that cannot be resolved stops this user.
+        $memberOf = @($user.MemberOf | ForEach-Object { [string]$_ })
+        $currentGroups = [System.Collections.Generic.List[string]]::new()
         try {
-            $currentGroups = @(Get-ADPrincipalGroupMembership -Identity $userDn -ErrorAction Stop @connection | ForEach-Object { $_.SamAccountName })
+            foreach ($name in @(@($result.Added) + @($result.Removed))) {
+                $group = Get-ADGroup -Identity $name -ErrorAction Stop @connection
+                if (-not $group -or -not $group.DistinguishedName) {
+                    throw ("Group '{0}' was not found." -f $name)
+                }
+                if ($memberOf -contains [string]$group.DistinguishedName) {
+                    $currentGroups.Add($name)
+                }
+            }
         } catch {
-            Write-Error -Message ("Could not read the group memberships of '{0}'; nothing was changed: {1}" -f $userDn, $_.Exception.Message) -Category ReadError -TargetObject $Identity
+            Write-Error -Message ("Could not resolve the template groups for '{0}'; nothing was changed: {1}" -f $userDn, $_.Exception.Message) -Category ReadError -TargetObject $Identity
             return
         }
 
