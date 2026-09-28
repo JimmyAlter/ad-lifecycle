@@ -18,6 +18,11 @@ function Disable-AdLifecycleUser {
            security principals.
         5. Moves the account to DisabledOU from the configuration (skipped if already there).
 
+        Safety guard: the command refuses, with an error and without changing anything, the
+        built-in Administrator (RID 500), krbtgt (RID 502) and the account running it (the
+        current Windows user, or the -Credential account). Accounts with adminCount = 1 (current
+        or former members of protected groups) are refused unless -Force is used.
+
         -Ticket is mandatory: every leaver is traceable to a request. ConfirmImpact is High, so
         PowerShell asks before changing anything; -WhatIf shows the plan and writes nothing
         (not even the CSV). Failures in steps 3-5 are reported as errors and listed in the result
@@ -46,6 +51,11 @@ function Disable-AdLifecycleUser {
 
     .PARAMETER ExportPath
         Optional CSV file to append the recorded memberships to (UTF-8). Created if missing.
+
+    .PARAMETER Force
+        Allows offboarding accounts with adminCount = 1 (current or former members of protected
+        groups such as Domain Admins). It does not lift the refusal for the built-in Administrator
+        (RID 500), krbtgt (RID 502) or your own account, and it does not skip the confirmation.
 
     .EXAMPLE
         Disable-AdLifecycleUser -Identity jpena -Ticket INC-4821 -ConfigPath .\lifecycle.config.psd1 -WhatIf
@@ -84,6 +94,8 @@ function Disable-AdLifecycleUser {
         [ValidateNotNullOrEmpty()]
         [string]$ExportPath,
 
+        [switch]$Force,
+
         [ValidateNotNullOrEmpty()]
         [string]$Server,
 
@@ -108,11 +120,19 @@ function Disable-AdLifecycleUser {
         if ($userDomain -and $userDomain -ne [Environment]::MachineName) {
             $operator = '{0}\{1}' -f $userDomain, $operator
         }
+
+        $callerSid = Get-AdLifecycleCallerSid
+        # With -Credential the AD calls run as that account: protect it as well.
+        $credentialName = $null
+        if ($connection.ContainsKey('Credential')) {
+            # DOMAIN\name or name@domain -> name
+            $credentialName = [string]$connection['Credential'].UserName -replace '^.*\\', '' -replace '@.*$', ''
+        }
     }
 
     process {
         try {
-            $user = Get-ADUser -Identity $Identity -Properties Description, PrimaryGroupID, MemberOf -ErrorAction Stop @connection
+            $user = Get-ADUser -Identity $Identity -Properties Description, PrimaryGroupID, MemberOf, adminCount -ErrorAction Stop @connection
             if (-not $user -or -not $user.DistinguishedName) {
                 throw 'No such user.'
             }
@@ -121,6 +141,27 @@ function Disable-AdLifecycleUser {
             return
         }
         $userDn = [string]$user.DistinguishedName
+
+        # Safety guard, before anything else is read or planned. The built-in Administrator
+        # (RID 500), krbtgt (RID 502) and the caller's own account are never offboarded here;
+        # protected accounts (adminCount = 1) only with -Force.
+        $userSid = [string]$user.SID
+        $rid = $userSid.Substring($userSid.LastIndexOf('-') + 1)
+        $refusal = $null
+        if ($rid -eq '500') {
+            $refusal = 'it is the built-in Administrator account (RID 500)'
+        } elseif ($rid -eq '502') {
+            $refusal = 'it is the krbtgt account (RID 502)'
+        } elseif (($callerSid -and $userSid -eq $callerSid) -or
+            ($credentialName -and [string]$user.SamAccountName -eq $credentialName)) {
+            $refusal = 'it is the account running this command'
+        } elseif ([string]$user.adminCount -eq '1' -and -not $Force) {
+            $refusal = 'adminCount is 1 (it is, or was, in a protected group such as Domain Admins); review it and use -Force to offboard it anyway'
+        }
+        if ($refusal) {
+            Write-Error -Message ("Refusing to offboard '{0}': {1}. Nothing was changed." -f $user.SamAccountName, $refusal) -Category PermissionDenied -TargetObject $Identity
+            return
+        }
 
         try {
             $memberships = @(Get-AdLifecycleUserGroup -User $user -Connection $connection)

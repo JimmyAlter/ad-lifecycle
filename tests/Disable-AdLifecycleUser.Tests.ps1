@@ -51,6 +51,93 @@ Describe 'Disable-AdLifecycleUser' {
         }
     }
 
+    Context 'safety guard' {
+        BeforeAll {
+            $adminDn = 'CN=Administrator,CN=Users,DC=corp,DC=example'
+            function Invoke-GuardedLeaver {
+                param([hashtable]$Extra = @{})
+                Invoke-Captured { Disable-AdLifecycleUser -Identity target1 -Ticket 'INC-9' -ConfigPath $ExampleConfigPath -Confirm:$false -ErrorAction Continue @Extra }
+            }
+        }
+
+        It 'refuses <Account> (RID <Rid>) even with -Force' -ForEach @(
+            @{ Account = 'the built-in Administrator'; Rid = 500; Message = '*built-in Administrator account (RID 500)*' }
+            @{ Account = 'krbtgt'; Rid = 502; Message = '*krbtgt account (RID 502)*' }
+        ) {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
+                New-TestAdUser -SamAccountName 'renamed-account' -DistinguishedName $adminDn -Rid $Rid
+            }
+
+            $run = Invoke-GuardedLeaver -Extra @{ Force = $true }
+
+            $run.Output | Should -BeNullOrEmpty
+            $run.Errors.Count | Should -Be 1
+            "$($run.Errors[0])" | Should -BeLike "Refusing to offboard 'renamed-account': $Message"
+            $run.Errors[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+            foreach ($command in $AdWriteCommandNames) {
+                Should -Invoke $command -ModuleName AdLifecycle -Times 0 -Exactly
+            }
+        }
+
+        It 'refuses the account running the command' {
+            Mock Get-AdLifecycleCallerSid -ModuleName AdLifecycle -MockWith { "$TestDomainSid-1700" }
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
+                New-TestAdUser -SamAccountName 'it.admin' -DistinguishedName 'CN=IT Admin,OU=Users,OU=Remote,OU=Sites,OU=Corp,DC=corp,DC=example' -Rid 1700
+            }
+
+            $run = Invoke-GuardedLeaver -Extra @{ Force = $true }
+
+            "$($run.Errors[0])" | Should -BeLike "*'it.admin': it is the account running this command*"
+            Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+
+        It 'refuses the -Credential account (<UserName>)' -ForEach @(
+            @{ UserName = 'CORP\svc-lifecycle' }
+            @{ UserName = 'svc-lifecycle@corp.example' }
+        ) {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
+                New-TestAdUser -SamAccountName 'svc-lifecycle' -DistinguishedName 'CN=svc-lifecycle,OU=Service,OU=Corp,DC=corp,DC=example' -Rid 1701
+            }
+            $credential = [pscredential]::new($UserName, [securestring]::new())
+
+            $run = Invoke-GuardedLeaver -Extra @{ Credential = $credential }
+
+            "$($run.Errors[0])" | Should -BeLike '*it is the account running this command*'
+            Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+
+        It 'refuses an account with adminCount = 1 without -Force, also under -WhatIf' {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
+                New-TestAdUser -SamAccountName 'old.admin' -DistinguishedName 'CN=Old Admin,OU=Users,OU=Remote,OU=Sites,OU=Corp,DC=corp,DC=example' -Rid 1702 -Property @{ adminCount = 1 }
+            }
+
+            $run = Invoke-GuardedLeaver
+            $whatIf = Invoke-Captured { Disable-AdLifecycleUser -Identity target1 -Ticket 'INC-9' -ConfigPath $ExampleConfigPath -WhatIf -ErrorAction Continue }
+
+            "$($run.Errors[0])" | Should -BeLike "*'old.admin': adminCount is 1*use -Force*"
+            $whatIf.Output | Should -BeNullOrEmpty
+            $whatIf.Errors.Count | Should -Be 1
+            Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+
+        It 'offboards an account with adminCount = 1 with -Force' {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
+                New-TestAdUser -SamAccountName 'old.admin' -DistinguishedName 'CN=Old Admin,OU=Users,OU=Remote,OU=Sites,OU=Corp,DC=corp,DC=example' -Rid 1702 -Property @{ adminCount = 1 }
+            }
+
+            $run = Invoke-GuardedLeaver -Extra @{ Force = $true }
+
+            $run.Errors | Should -BeNullOrEmpty
+            $run.Output[0].Applied | Should -BeTrue
+            Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 1 -Exactly
+        }
+
+        It 'reads adminCount from AD' {
+            Disable-AdLifecycleUser @leaver -WhatIf | Out-Null
+            Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Properties -contains 'adminCount' }
+        }
+    }
+
     Context 'with -WhatIf' {
         It 'performs zero write calls and writes no CSV' {
             $csv = Join-Path $TestDrive 'whatif.csv'
