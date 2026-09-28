@@ -52,7 +52,7 @@ jobs:
           Install-Module -Name PSScriptAnalyzer -RequiredVersion 1.25.0 -Force -Scope CurrentUser
 
       - name: Pester
-        run: ./build.ps1 -Task Test -CI
+        run: ./build.ps1 -Task Test -CI -CoverageTarget 90
 
       - name: PSScriptAnalyzer
         if: ${{ matrix.analyze && (success() || failure()) }}

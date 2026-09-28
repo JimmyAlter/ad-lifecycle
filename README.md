@@ -291,16 +291,22 @@ Departments.Finance Has no groups. Every department needs at least one group.
 
 ## Testing
 
-The Pester 5 suite is the main point of this repository (185 tests; Pester reports about 97% of
-the module's commands covered on Windows PowerShell 5.1). It proves, without any domain
-controller:
+The Pester 5 suite is the main point of this repository (251 tests; Pester reports about 98% of
+the module's commands covered on Windows PowerShell 5.1, and CI fails below 90%). It proves,
+without any domain controller:
 
 - **`-WhatIf` performs zero writes** for all three commands that change AD
   (`Should -Invoke New-ADUser -Times 0`, and the same for every other write cmdlet), and
   `-Confirm:$false` makes exactly the expected calls with the expected OU, UPN, groups and DNs.
-- **Leaver:** `-Ticket` is mandatory and validated; Domain Users and the primary group are kept
-  (also when localized); memberships are exported before the first write; a failed disable
-  stops everything else; a failed CSV write changes nothing.
+- **One DC per run:** every read and write of a run carries the same `-Server` (discovered once,
+  or given), and `-Credential` is passed through.
+- **Leaver:** `-Ticket` is mandatory and validated; RID 500, RID 502, the caller's own account
+  and `adminCount = 1` (without `-Force`) are refused; already-offboarded accounts are skipped;
+  Domain Users and the primary group are kept (also when localized); memberships come from
+  `memberOf` and are exported before the first write; a failed disable stops everything else; a
+  failed CSV write changes nothing.
+- **Audit log:** one JSON line per change with the expected fields, never the password, nothing
+  under `-WhatIf`, still written when `-ErrorAction Stop` interrupts a leaver.
 - **Mover:** the Added / Removed / Unchanged diff, that only real changes are applied, site
   moves, title and manager in one `Set-ADUser` call, the order of the steps, and the 0.1.0 alias.
 - **Joiner:** name generation (Spanish and other diacritics, apostrophes, hyphens, 20-character
@@ -309,9 +315,9 @@ controller:
 - **Passwords:** SecureString only, read-only, length, character classes on 500 samples,
   uniqueness, allowed alphabet.
 - **Stale computers:** FILETIME conversion against a known value, threshold boundaries, the
-  `pwdLastSet` signal (and `-LastLogonOnly`),
-  never-logged-on handling, the LDAP filter sent to AD.
-- **Configuration:** each broken case (24 of them) is reported; data files containing code are
+  `pwdLastSet` signal (and `-LastLogonOnly`), never-logged-on handling, the LDAP filter sent to
+  AD.
+- **Configuration:** each broken case (26 of them) is reported; data files containing code are
   rejected without being executed.
 - **Module hygiene:** the manifest is valid, exports exactly the functions in `Public/`, has no
   `RequiredModules`, imports in a fresh session without the AD module; every public function has
@@ -321,7 +327,8 @@ controller:
 **How AD is faked.** `tests/TestHelpers.ps1` defines a stub function for each AD cmdlet the module
 uses (`Get-ADUser`, `New-ADUser`, `Add-ADGroupMember`, ...) only when the real one is missing,
 then mocks all of them inside the module's scope with `Mock -ModuleName AdLifecycle`. Reads
-return nothing and writes do nothing unless a test says otherwise, so even on a machine that has
+return nothing (except `Get-ADDomainController`, which returns a fictional `dc01.corp.example`)
+and writes do nothing unless a test says otherwise, so even on a machine that has
 RSAT no test can reach a real directory, and a test fails if the module ever calls an AD cmdlet
 that is not in that list. On machines with RSAT the mocks drop the AD parameter types
 (`-RemoveParameterType`) so parameter filters compare plain strings.
@@ -332,13 +339,14 @@ Run everything (Pester 5 and PSScriptAnalyzer must be installed):
 Install-Module Pester -MinimumVersion 5.5 -MaximumVersion 5.99 -Scope CurrentUser -SkipPublisherCheck
 Install-Module PSScriptAnalyzer -Scope CurrentUser
 ./build.ps1                 # tests + analyzer
-./build.ps1 -Task Test -CI  # also writes NUnit results and JaCoCo coverage to ./testResults
+./build.ps1 -Task Test -CI  # also NUnit results + JaCoCo coverage in ./testResults; fails below 90%
 ```
 
 CI runs the suite on Windows PowerShell 5.1 and PowerShell 7 on Windows, and PowerShell 7 on
 Linux. PSScriptAnalyzer runs on both Windows shells over the module, the examples and
 `build.ps1`, and fails the build on any Error or Warning (`PSScriptAnalyzerSettings.psd1`; there
-is one suppression, with its justification, on `New-AdInitialPassword`).
+is one suppression, with its justification, on `New-AdInitialPassword`). Each test job also
+posts a table with the test count and the coverage to the run's summary page.
 
 ## Limitations
 

@@ -15,7 +15,11 @@
     All (default), Test or Analyze.
 
 .PARAMETER CI
-    Also write NUnit test results and JaCoCo code coverage to ./testResults.
+    Also write NUnit test results and JaCoCo code coverage to ./testResults, fail when code
+    coverage is below -CoverageTarget, and (on GitHub Actions) add a summary to the job page.
+
+.PARAMETER CoverageTarget
+    Minimum code coverage in percent with -CI. Default 90.
 
 .EXAMPLE
     ./build.ps1
@@ -28,14 +32,17 @@ param(
     [ValidateSet('All', 'Test', 'Analyze')]
     [string]$Task = 'All',
 
-    [switch]$CI
+    [switch]$CI,
+
+    [ValidateRange(0, 100)]
+    [double]$CoverageTarget = 90
 )
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
 function Invoke-TestTask {
-    param([switch]$WriteResults)
+    param([switch]$WriteResults, [double]$MinimumCoverage = 90)
 
     $pester = Get-Module -Name Pester | Where-Object { $_.Version.Major -eq 5 }
     if (-not $pester) {
@@ -60,6 +67,7 @@ function Invoke-TestTask {
         $configuration.CodeCoverage.Path = @(Join-Path $root 'AdLifecycle')
         $configuration.CodeCoverage.OutputFormat = 'JaCoCo'
         $configuration.CodeCoverage.OutputPath = Join-Path $resultsDir 'coverage.xml'
+        $configuration.CodeCoverage.CoveragePercentTarget = $MinimumCoverage
     }
 
     $result = Invoke-Pester -Configuration $configuration
@@ -68,6 +76,28 @@ function Invoke-TestTask {
             $result.FailedCount, $result.PassedCount, $result.SkippedCount, $result.FailedBlocksCount, $result.FailedContainersCount)
     }
     Write-Output ('Pester: {0} passed, {1} failed, {2} skipped.' -f $result.PassedCount, $result.FailedCount, $result.SkippedCount)
+
+    if ($WriteResults) {
+        $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+        $coverage = [math]::Round([double]$result.CodeCoverage.CoveragePercent, 2)
+        $coverageText = $coverage.ToString('0.00', $invariant) + '%'
+        $targetText = $MinimumCoverage.ToString('0.##', $invariant) + '%'
+        if ($env:GITHUB_STEP_SUMMARY) {
+            $lines = @(
+                ('### Pester on PowerShell {0} ({1}, {2})' -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition, [Environment]::OSVersion.Platform)
+                ''
+                '| Tests passed | Failed | Skipped | Coverage | Target |'
+                '| --- | --- | --- | --- | --- |'
+                ('| {0} | {1} | {2} | {3} | {4} |' -f $result.PassedCount, $result.FailedCount, $result.SkippedCount, $coverageText, $targetText)
+                ''
+            )
+            [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, ($lines -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
+        }
+        if ($coverage -lt $MinimumCoverage) {
+            throw ('Code coverage {0} is below the target of {1}.' -f $coverageText, $targetText)
+        }
+        Write-Output ('Code coverage: {0} (target {1}).' -f $coverageText, $targetText)
+    }
 }
 
 function Invoke-AnalyzeTask {
@@ -96,7 +126,7 @@ function Invoke-AnalyzeTask {
 }
 
 if ($Task -in 'All', 'Test') {
-    Invoke-TestTask -WriteResults:$CI
+    Invoke-TestTask -WriteResults:$CI -MinimumCoverage $CoverageTarget
 }
 if ($Task -in 'All', 'Analyze') {
     Invoke-AnalyzeTask

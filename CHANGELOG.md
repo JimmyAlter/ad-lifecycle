@@ -30,6 +30,8 @@ version is 0, a minor version may contain breaking changes; they are called out 
   passwords; nothing is written under `-WhatIf`.
 - Optional `-Ticket` on `New-AdLifecycleUser` (also from a `Ticket` CSV column) and
   `Set-AdLifecycleUser`, recorded in the audit log.
+- CI fails when code coverage drops below 90% (`build.ps1 -CoverageTarget`, Pester
+  `CoveragePercentTarget`) and writes a test and coverage summary to each job's summary page.
 
 ### Changed
 
