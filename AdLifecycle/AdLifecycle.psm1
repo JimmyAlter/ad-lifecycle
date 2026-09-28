@@ -16,9 +16,12 @@ foreach ($file in @($privateFiles + $publicFiles)) {
     }
 }
 
+# Backward-compatible name of Set-AdLifecycleUser from 0.1.0 (listed in the manifest's AliasesToExport).
+Set-Alias -Name 'Set-AdLifecycleDepartment' -Value 'Set-AdLifecycleUser'
+
 $publicNames = @($publicFiles | ForEach-Object { $_.BaseName })
 if ($publicNames.Count -gt 0) {
-    Export-ModuleMember -Function $publicNames
+    Export-ModuleMember -Function $publicNames -Alias 'Set-AdLifecycleDepartment'
 } else {
     Export-ModuleMember
 }

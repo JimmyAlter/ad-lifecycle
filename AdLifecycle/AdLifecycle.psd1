@@ -15,14 +15,14 @@
 
     FunctionsToExport    = @(
         'New-AdLifecycleUser'
-        'Set-AdLifecycleDepartment'
+        'Set-AdLifecycleUser'
         'Disable-AdLifecycleUser'
         'Get-AdStaleComputer'
         'Test-AdLifecycleConfig'
     )
     CmdletsToExport      = @()
     VariablesToExport    = @()
-    AliasesToExport      = @()
+    AliasesToExport      = @('Set-AdLifecycleDepartment')
 
     PrivateData          = @{
         PSData = @{

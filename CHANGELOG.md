@@ -12,7 +12,7 @@ version is 0, a minor version may contain breaking changes; they are called out 
 
 - Module manifest: `ProjectUri`, `LicenseUri`, `ReleaseNotes` and the `PSEdition_Desktop` /
   `PSEdition_Core` tags.
-- `-Server` and `-Credential` on `New-AdLifecycleUser`, `Set-AdLifecycleDepartment`,
+- `-Server` and `-Credential` on `New-AdLifecycleUser`, `Set-AdLifecycleUser`,
   `Disable-AdLifecycleUser` and `Get-AdStaleComputer`.
 - Leaver safety guard: `Disable-AdLifecycleUser` refuses the built-in Administrator (RID 500),
   krbtgt (RID 502) and the caller's own account (Windows identity or `-Credential` user), and
@@ -20,8 +20,16 @@ version is 0, a minor version may contain breaking changes; they are called out 
 - The leaver is idempotent: an account that is already disabled and in `DisabledOU` is skipped
   with a warning (new `Skipped` property on `AdLifecycle.LeaverResult`) instead of having its
   description, date and ticket overwritten.
+- Mover: `-Site` (moves the account to the site's OU and sets `Office`), `-Title` and `-Manager`,
+  all planned and confirmed together with the department change in a single `ShouldProcess`
+  per user. `AdLifecycle.MoverResult` gains `PreviousTitle`, `Title`, `PreviousManager`,
+  `Manager`, `PreviousOU` and `TargetOU`.
 
 ### Changed
+
+- `Set-AdLifecycleDepartment` is renamed `Set-AdLifecycleUser`, since it now changes more than
+  the department, and `-Department` is optional (at least one of `-Department`, `-Site`,
+  `-Title`, `-Manager` is required). `Set-AdLifecycleDepartment` remains as an exported alias.
 
 - The three write commands pin one writable domain controller per run
   (`Get-ADDomainController -Discover -Writable`, or `-Server`) and send every AD call to it. This

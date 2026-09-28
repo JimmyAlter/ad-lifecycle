@@ -20,7 +20,7 @@
     }
 
     # Groups every new user gets, whatever the department. Optional.
-    # Not touched by Set-AdLifecycleDepartment (a department change keeps them).
+    # Not touched by Set-AdLifecycleUser (a department change keeps them).
     CommonGroups   = @(
         'GG-All-Staff'
         'GG-VPN-Users'

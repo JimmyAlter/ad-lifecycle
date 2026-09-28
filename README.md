@@ -15,7 +15,7 @@ several AD domains. The domain (`corp.example`), OUs and groups in this reposito
 | Command | Stage | Changes AD |
 | --- | --- | --- |
 | `New-AdLifecycleUser` | Joiner | Yes, after confirmation. Creates the account from the site and department templates. |
-| `Set-AdLifecycleDepartment` | Mover | Yes, after confirmation. Applies the group difference between two department templates. |
+| `Set-AdLifecycleUser` | Mover | Yes, after confirmation. Applies the group difference between two department templates, and moves the account to another site OU, sets title and manager. Alias: `Set-AdLifecycleDepartment`. |
 | `Disable-AdLifecycleUser` | Leaver | Yes, after confirmation. Disables, records and removes group memberships, tags with the ticket, moves to the disabled OU. |
 | `Get-AdStaleComputer` | Hygiene | No. Lists computers that have not logged on for N days. |
 | `Test-AdLifecycleConfig` | Config | No, and works offline. Validates a configuration file. |
@@ -133,7 +133,7 @@ mfernandezcastellano mfernandezcastellano@corp.example IT          Remote
 ### Mover
 
 ```text
-PS> Set-AdLifecycleDepartment -Identity jpena -Department Sales -WhatIf
+PS> Set-AdLifecycleUser -Identity jpena -Department Sales -WhatIf
 
 What if: Performing the operation "Change department 'Finance' -> 'Sales'; add to: GG-Sales, GG-Share-Sales-RW, GG-App-CRM; remove from: GG-Finance, GG-Share-Finance-RW, GG-App-ERP" on target "jpena (CN=Jose Pena,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example)".
 
@@ -147,7 +147,22 @@ Unchanged      : {GG-Reporting-Read}
 Only groups in the two templates are touched; `CommonGroups` and anything granted by hand stay.
 Groups the user already has are not re-added, and groups they do not have are not "removed".
 The current department comes from the user's `Department` attribute; use `-FromDepartment` when
-that attribute is empty or wrong.
+that attribute is empty or wrong. Every template group involved is resolved first; if one does
+not exist, nothing is changed for that user.
+
+A full internal transfer (department, site, title, manager) is one command and one
+confirmation. Only what differs is written: groups are added, then removed, then one
+`Set-ADUser` sets the attributes (`Department`, `Title`, `Manager`, `Office` = site name), and the
+account is moved to the new site's OU last:
+
+```text
+PS> Set-AdLifecycleUser -Identity jpena -Department Sales -Site Cordoba -Title 'Account Executive' -Manager mlopez -WhatIf
+
+What if: Performing the operation "Change department 'Finance' -> 'Sales'; add to: GG-Sales, GG-Share-Sales-RW, GG-App-CRM; remove from: GG-Finance, GG-Share-Finance-RW; set Title 'Account Executive'; set Manager 'CN=Marta Lopez,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example'; set Office 'Cordoba'; move to 'OU=Users,OU=Cordoba,OU=Sites,OU=Corp,DC=corp,DC=example'" on target "jpena (CN=Jose Pena,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example)".
+```
+
+`-Department`, `-Site`, `-Title` and `-Manager` are each optional, but at least one is required.
+`Set-AdLifecycleDepartment`, the 0.1.0 name of this command, still works as an alias.
 
 ### Leaver
 
@@ -248,7 +263,8 @@ controller:
 - **Leaver:** `-Ticket` is mandatory and validated; Domain Users and the primary group are kept
   (also when localized); memberships are exported before the first write; a failed disable
   stops everything else; a failed CSV write changes nothing.
-- **Mover:** the Added / Removed / Unchanged diff, and that only real changes are applied.
+- **Mover:** the Added / Removed / Unchanged diff, that only real changes are applied, site
+  moves, title and manager in one `Set-ADUser` call, the order of the steps, and the 0.1.0 alias.
 - **Joiner:** name generation (Spanish and other diacritics, apostrophes, hyphens, 20-character
   truncation, collisions on sAMAccountName or UPN, no duplicates within one run), and that the
   password is still returned when a group add fails, even under `-ErrorAction Stop`.
@@ -292,8 +308,7 @@ is one suppression, with its justification, on `New-AdInitialPassword`).
 - The `sAMAccountName` rule is fixed. Names with no Latin letters at all are rejected with an
   error rather than guessed. Two people with the same full name in the same site OU will make
   `New-ADUser` fail on the duplicate CN; nothing is created in that case.
-- The mover applies a template diff; it is not a reconciler. It does not move the user between
-  site OUs.
+- The mover applies a template diff; it is not a reconciler.
 - The leaver does not handle mailboxes, home folders or licenses.
 - `lastLogonTimestamp` is replicated with a delay of up to 14 days by default, so stale-computer
   results are not precise for short windows.

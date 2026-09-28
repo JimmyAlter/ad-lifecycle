@@ -4,7 +4,7 @@
             ForEach-Object { @{ Name = $_.BaseName } })
     $mutatingFunctions = @(@(
         @{ Name = 'New-AdLifecycleUser' }
-        @{ Name = 'Set-AdLifecycleDepartment' }
+        @{ Name = 'Set-AdLifecycleUser' }
         @{ Name = 'Disable-AdLifecycleUser' }
     ) | Where-Object { Test-Path (Join-Path (Join-Path $moduleRoot 'Public') "$($_.Name).ps1") })
     $readOnlyFunctions = @(@(
@@ -79,10 +79,15 @@ Describe 'AdLifecycle exports' {
         }
     }
 
-    It 'exports no cmdlets, aliases or variables' {
+    It 'exports no cmdlets or variables' {
         (Get-Module AdLifecycle).ExportedCmdlets.Count | Should -Be 0
-        (Get-Module AdLifecycle).ExportedAliases.Count | Should -Be 0
         (Get-Module AdLifecycle).ExportedVariables.Count | Should -Be 0
+    }
+
+    It 'exports only the Set-AdLifecycleDepartment alias, for backward compatibility with 0.1.0' {
+        @((Get-Module AdLifecycle).ExportedAliases.Keys) | Should -Be @('Set-AdLifecycleDepartment')
+        @($manifest.AliasesToExport) | Should -Be @('Set-AdLifecycleDepartment')
+        (Get-Alias -Name Set-AdLifecycleDepartment).ResolvedCommandName | Should -Be 'Set-AdLifecycleUser'
     }
 
     It 'imports in a fresh session that has no ActiveDirectory module loaded' {
