@@ -24,6 +24,12 @@ function Get-AdStaleComputer {
     .PARAMETER SearchBase
         Optional OU distinguished name to limit the search to.
 
+    .PARAMETER Server
+        Optional domain controller or domain to query. When omitted, the AD module picks one.
+
+    .PARAMETER Credential
+        Account to connect to Active Directory as. Defaults to the current user.
+
     .EXAMPLE
         Get-AdStaleComputer -Days 120 | Sort-Object DaysInactive -Descending | Format-Table Name, LastLogonUtc, DaysInactive, OperatingSystem
 
@@ -44,7 +50,14 @@ function Get-AdStaleComputer {
         [int]$Days = 90,
 
         [ValidateNotNullOrEmpty()]
-        [string]$SearchBase
+        [string]$SearchBase,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$Server,
+
+        [System.Management.Automation.PSCredential]
+        [System.Management.Automation.Credential()]
+        $Credential = [System.Management.Automation.PSCredential]::Empty
     )
 
     Assert-AdModule
@@ -60,6 +73,10 @@ function Get-AdStaleComputer {
     }
     if ($SearchBase) {
         $query['SearchBase'] = $SearchBase
+    }
+    $connection = Get-AdLifecycleConnection -Server $Server -Credential $Credential
+    foreach ($key in $connection.Keys) {
+        $query[$key] = $connection[$key]
     }
 
     foreach ($computer in @(Get-ADComputer @query)) {

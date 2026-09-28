@@ -185,6 +185,53 @@ Describe 'New-AdLifecycleUser' {
         }
     }
 
+    Context 'domain controller pinning' {
+        BeforeAll {
+            Mock New-ADUser -ModuleName AdLifecycle -MockWith {
+                [pscustomobject]@{ SamAccountName = $SamAccountName; DistinguishedName = "CN=$Name,$Path" }
+            }
+        }
+
+        It 'discovers one writable DC per run and sends every AD call of the joiner to it' {
+            $rows = @(
+                [pscustomobject]@{ GivenName = 'Lucía'; Surname = 'Muñoz'; Department = 'Finance'; Site = 'Madrid'; Title = 'Accountant'; Manager = 'mlopez' }
+                [pscustomobject]@{ GivenName = 'Luis'; Surname = 'Diaz'; Department = 'IT'; Site = 'Remote'; Title = 'Engineer'; Manager = '' }
+            )
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'mlopez' } -MockWith {
+                [pscustomobject]@{ SamAccountName = 'mlopez'; DistinguishedName = 'CN=Marta Lopez,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example' }
+            }
+
+            $rows | New-AdLifecycleUser -ConfigPath $ExampleConfigPath -Confirm:$false | Out-Null
+
+            Should -Invoke Get-ADDomainController -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Discover -and $Writable }
+            Should -Invoke New-ADUser -ModuleName AdLifecycle -Times 2 -Exactly -ParameterFilter { $Server -eq $TestDomainController }
+            Should -Invoke Add-ADGroupMember -ModuleName AdLifecycle -Times 0 -Exactly -ParameterFilter { $Server -ne $TestDomainController }
+            Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 0 -Exactly -ParameterFilter { $Server -ne $TestDomainController }
+            Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Identity -eq 'mlopez' -and $Server -eq $TestDomainController }
+        }
+
+        It 'uses -Server and -Credential as given, without discovery' {
+            $credential = [pscredential]::new('CORP\svc-lifecycle', [securestring]::new())
+
+            New-AdLifecycleUser @joiner -Server dc07.corp.example -Credential $credential -Confirm:$false | Out-Null
+
+            Should -Invoke Get-ADDomainController -ModuleName AdLifecycle -Times 0 -Exactly
+            Should -Invoke New-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+                $Server -eq 'dc07.corp.example' -and $Credential.UserName -eq 'CORP\svc-lifecycle'
+            }
+            Should -Invoke Add-ADGroupMember -ModuleName AdLifecycle -Times $financeGroups.Count -Exactly -ParameterFilter {
+                $Server -eq 'dc07.corp.example' -and $Credential.UserName -eq 'CORP\svc-lifecycle'
+            }
+        }
+
+        It 'refuses to start when no writable DC can be located' {
+            Mock Get-ADDomainController -ModuleName AdLifecycle -MockWith { throw 'The server is not operational' }
+
+            { New-AdLifecycleUser @joiner -Confirm:$false } | Should -Throw '*writable domain controller*'
+            Should -Invoke New-ADUser -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+    }
+
     Context 'input validation' {
         It 'rejects an unknown <Parameter> without writing anything' -ForEach @(
             @{ Parameter = 'Department'; Value = 'Marketing'; Message = "*Unknown department 'Marketing'*" }

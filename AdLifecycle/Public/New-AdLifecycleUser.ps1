@@ -49,6 +49,14 @@ function New-AdLifecycleUser {
     .PARAMETER ConfigPath
         Path to the .psd1 configuration file. See examples/lifecycle.config.psd1.
 
+    .PARAMETER Server
+        Domain controller to use for every read and write. When omitted, one writable domain
+        controller is located once (Get-ADDomainController -Discover -Writable) and pinned for the
+        whole run, so the group adds go to the same DC that created the account.
+
+    .PARAMETER Credential
+        Account to connect to Active Directory as. Defaults to the current user.
+
     .EXAMPLE
         New-AdLifecycleUser -GivenName 'Jose' -Surname 'Pena' -Department Finance -Site Madrid -Title 'Accountant' -ConfigPath .\lifecycle.config.psd1 -WhatIf
 
@@ -101,12 +109,20 @@ function New-AdLifecycleUser {
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string]$ConfigPath
+        [string]$ConfigPath,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$Server,
+
+        [System.Management.Automation.PSCredential]
+        [System.Management.Automation.Credential()]
+        $Credential = [System.Management.Automation.PSCredential]::Empty
     )
 
     begin {
         Assert-AdModule
         $config = Get-AdLifecycleConfig -Path $ConfigPath
+        $connection = Get-AdLifecycleConnection -Server $Server -Credential $Credential -DiscoverWritable
 
         $passwordLength = 16
         if ($config.Contains('PasswordLength')) {
@@ -151,7 +167,7 @@ function New-AdLifecycleUser {
         $managerDn = $null
         if (-not [string]::IsNullOrWhiteSpace($Manager)) {
             try {
-                $managerUser = Get-ADUser -Identity $Manager.Trim() -ErrorAction Stop
+                $managerUser = Get-ADUser -Identity $Manager.Trim() -ErrorAction Stop @connection
                 if (-not $managerUser) {
                     throw 'No such user.'
                 }
@@ -163,7 +179,7 @@ function New-AdLifecycleUser {
         }
 
         try {
-            $sam = Resolve-AdSamAccountName -GivenName $GivenName -Surname $Surname -UpnSuffix $config.UpnSuffix -Reserved @($assigned)
+            $sam = Resolve-AdSamAccountName -GivenName $GivenName -Surname $Surname -UpnSuffix $config.UpnSuffix -Reserved @($assigned) -Connection $connection
         } catch {
             Write-Error -Message $_.Exception.Message -Category InvalidData -TargetObject ('{0} {1}' -f $GivenName, $Surname)
             return
@@ -215,6 +231,9 @@ function New-AdLifecycleUser {
             Confirm               = $false
             ErrorAction           = 'Stop'
         }
+        foreach ($key in $connection.Keys) {
+            $newUserParams[$key] = $connection[$key]
+        }
         if ($managerDn) {
             $newUserParams['Manager'] = $managerDn
         }
@@ -244,7 +263,7 @@ function New-AdLifecycleUser {
         $failed = [System.Collections.Generic.List[string]]::new()
         foreach ($group in $groups) {
             try {
-                Add-ADGroupMember -Identity $group -Members $member -Confirm:$false -ErrorAction Stop
+                Add-ADGroupMember -Identity $group -Members $member -Confirm:$false -ErrorAction Stop @connection
             } catch {
                 $failed.Add($group)
                 Write-Warning ("User '{0}' was created, but adding it to group '{1}' failed: {2}" -f $sam, $group, $_.Exception.Message)

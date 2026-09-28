@@ -104,6 +104,21 @@ Describe 'Get-AdStaleComputer' {
         Should -Invoke Get-ADComputer -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $null -eq $SearchBase }
     }
 
+    It 'passes -Server and -Credential through and does not discover a DC' {
+        $credential = [pscredential]::new('CORPsvc-report', [securestring]::new())
+        Get-AdStaleComputer -Server dc07.corp.example -Credential $credential | Out-Null
+
+        Should -Invoke Get-ADComputer -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+            $Server -eq 'dc07.corp.example' -and $Credential.UserName -eq 'CORPsvc-report'
+        }
+        Should -Invoke Get-ADDomainController -ModuleName AdLifecycle -Times 0 -Exactly
+    }
+
+    It 'lets the AD module pick a DC when -Server is not given' {
+        Get-AdStaleComputer | Out-Null
+        Should -Invoke Get-ADComputer -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $null -eq $Server -and $null -eq $Credential }
+    }
+
     It 'returns typed objects with the documented properties' {
         $first = Get-AdStaleComputer | Select-Object -First 1
         $first.PSObject.TypeNames | Should -Contain 'AdLifecycle.StaleComputer'

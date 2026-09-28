@@ -11,6 +11,8 @@ function Resolve-AdSamAccountName {
 
         Candidates only ever contain a-z and 0-9, so building the LDAP filter from them is safe.
         Read-only: this runs under -WhatIf too, so the plan shows the real name.
+        -Connection (Server/Credential) is passed to Get-ADUser so the check uses the same DC as
+        the create.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -28,7 +30,10 @@ function Resolve-AdSamAccountName {
         [string[]]$Reserved = @(),
 
         [ValidateRange(2, 999)]
-        [int]$MaxSuffix = 99
+        [int]$MaxSuffix = 99,
+
+        # -Server / -Credential splat from Get-AdLifecycleConnection.
+        [hashtable]$Connection = @{}
     )
 
     for ($attempt = 1; $attempt -le $MaxSuffix; $attempt++) {
@@ -47,7 +52,7 @@ function Resolve-AdSamAccountName {
         }
 
         $filter = '(|(sAMAccountName={0})(userPrincipalName={0}@{1}))' -f $candidate, $UpnSuffix
-        $existing = Get-ADUser -LDAPFilter $filter -ErrorAction Stop
+        $existing = Get-ADUser -LDAPFilter $filter -ErrorAction Stop @Connection
         if (-not $existing) {
             return $candidate
         }

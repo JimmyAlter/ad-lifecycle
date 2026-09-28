@@ -128,6 +128,18 @@ Describe 'Set-AdLifecycleDepartment' {
         }
     }
 
+    Context 'domain controller' {
+        It 'uses -Server for every AD call' {
+            Set-AdLifecycleDepartment @mover -Server dc07.corp.example -Confirm:$false | Out-Null
+
+            Should -Invoke Get-ADDomainController -ModuleName AdLifecycle -Times 0 -Exactly
+            foreach ($command in @($AdWriteCommandNames) + 'Get-ADUser') {
+                Should -Invoke $command -ModuleName AdLifecycle -Times 0 -Exactly -ParameterFilter { $Server -ne 'dc07.corp.example' }
+            }
+            Should -Invoke Add-ADGroupMember -ModuleName AdLifecycle -Times 3 -Exactly -ParameterFilter { $Server -eq 'dc07.corp.example' }
+        }
+    }
+
     Context 'nothing to do or invalid input' {
         It 'writes nothing when the user is already in the target department' {
             $result = Set-AdLifecycleDepartment -Identity jpena -Department Finance -ConfigPath $ExampleConfigPath -Confirm:$false

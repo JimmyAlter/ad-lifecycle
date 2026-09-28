@@ -12,6 +12,14 @@ version is 0, a minor version may contain breaking changes; they are called out 
 
 - Module manifest: `ProjectUri`, `LicenseUri`, `ReleaseNotes` and the `PSEdition_Desktop` /
   `PSEdition_Core` tags.
+- `-Server` and `-Credential` on `New-AdLifecycleUser`, `Set-AdLifecycleDepartment`,
+  `Disable-AdLifecycleUser` and `Get-AdStaleComputer`.
+
+### Changed
+
+- The three write commands pin one writable domain controller per run
+  (`Get-ADDomainController -Discover -Writable`, or `-Server`) and send every AD call to it. This
+  fixes joiner group adds that could fail on a DC that had not replicated the new account yet.
 
 ## [0.1.0] - 2026-09-25
 

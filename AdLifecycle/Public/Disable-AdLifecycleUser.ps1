@@ -33,6 +33,14 @@ function Disable-AdLifecycleUser {
     .PARAMETER ConfigPath
         Path to the .psd1 configuration file. See examples/lifecycle.config.psd1.
 
+    .PARAMETER Server
+        Domain controller to use for every read and write. When omitted, one writable domain
+        controller is located once (Get-ADDomainController -Discover -Writable) and pinned for the
+        whole run, so every step for a user goes to the same DC.
+
+    .PARAMETER Credential
+        Account to connect to Active Directory as. Defaults to the current user.
+
     .PARAMETER ExportPath
         Optional CSV file to append the recorded memberships to (UTF-8). Created if missing.
 
@@ -71,12 +79,20 @@ function Disable-AdLifecycleUser {
         [string]$ConfigPath,
 
         [ValidateNotNullOrEmpty()]
-        [string]$ExportPath
+        [string]$ExportPath,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$Server,
+
+        [System.Management.Automation.PSCredential]
+        [System.Management.Automation.Credential()]
+        $Credential = [System.Management.Automation.PSCredential]::Empty
     )
 
     begin {
         Assert-AdModule
         $config = Get-AdLifecycleConfig -Path $ConfigPath
+        $connection = Get-AdLifecycleConnection -Server $Server -Credential $Credential -DiscoverWritable
         $disabledOu = [string]$config.DisabledOU
 
         $now = Get-Date
@@ -93,7 +109,7 @@ function Disable-AdLifecycleUser {
 
     process {
         try {
-            $user = Get-ADUser -Identity $Identity -Properties Description, PrimaryGroupID -ErrorAction Stop
+            $user = Get-ADUser -Identity $Identity -Properties Description, PrimaryGroupID -ErrorAction Stop @connection
             if (-not $user -or -not $user.DistinguishedName) {
                 throw 'No such user.'
             }
@@ -104,7 +120,7 @@ function Disable-AdLifecycleUser {
         $userDn = [string]$user.DistinguishedName
 
         try {
-            $memberships = @(Get-ADPrincipalGroupMembership -Identity $userDn -ErrorAction Stop)
+            $memberships = @(Get-ADPrincipalGroupMembership -Identity $userDn -ErrorAction Stop @connection)
         } catch {
             Write-Error -Message ("Could not read the group memberships of '{0}'; nothing was changed: {1}" -f $userDn, $_.Exception.Message) -Category ReadError -TargetObject $Identity
             return
@@ -191,7 +207,7 @@ function Disable-AdLifecycleUser {
         }
 
         try {
-            Disable-ADAccount -Identity $userDn -Confirm:$false -ErrorAction Stop
+            Disable-ADAccount -Identity $userDn -Confirm:$false -ErrorAction Stop @connection
         } catch {
             Write-Error -Message ("Failed to disable '{0}'; no other changes were made: {1}" -f $userDn, $_.Exception.Message) -Category WriteError -TargetObject $Identity
             return
@@ -199,7 +215,7 @@ function Disable-AdLifecycleUser {
         $result.Applied = $true
 
         try {
-            Set-ADUser -Identity $userDn -Description $description -Confirm:$false -ErrorAction Stop
+            Set-ADUser -Identity $userDn -Description $description -Confirm:$false -ErrorAction Stop @connection
         } catch {
             Write-Error -Message ("'{0}' is disabled, but setting the description failed: {1}" -f $userDn, $_.Exception.Message) -Category WriteError -TargetObject $Identity
         }
@@ -208,7 +224,7 @@ function Disable-AdLifecycleUser {
         $failed = [System.Collections.Generic.List[string]]::new()
         foreach ($group in $toRemove) {
             try {
-                Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userDn -Confirm:$false -ErrorAction Stop
+                Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userDn -Confirm:$false -ErrorAction Stop @connection
                 $removed.Add($group.Name)
             } catch {
                 $failed.Add($group.Name)
@@ -220,7 +236,7 @@ function Disable-AdLifecycleUser {
 
         if ($needsMove) {
             try {
-                Move-ADObject -Identity $userDn -TargetPath $disabledOu -Confirm:$false -ErrorAction Stop
+                Move-ADObject -Identity $userDn -TargetPath $disabledOu -Confirm:$false -ErrorAction Stop @connection
             } catch {
                 Write-Error -Message ("'{0}' is disabled, but moving it to '{1}' failed: {2}" -f $userDn, $disabledOu, $_.Exception.Message) -Category WriteError -TargetObject $Identity
             }

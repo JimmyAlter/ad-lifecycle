@@ -167,6 +167,17 @@ Describe 'Disable-AdLifecycleUser' {
     }
 
     Context 'edge cases' {
+        It 'sends every AD call to one pinned writable DC' {
+            Disable-AdLifecycleUser @leaver -Confirm:$false | Out-Null
+
+            Should -Invoke Get-ADDomainController -ModuleName AdLifecycle -Times 1 -Exactly
+            foreach ($command in @($AdWriteCommandNames) + 'Get-ADUser') {
+                Should -Invoke $command -ModuleName AdLifecycle -Times 0 -Exactly -ParameterFilter { $Server -ne $TestDomainController }
+            }
+            Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Server -eq $TestDomainController }
+            Should -Invoke Move-ADObject -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Server -eq $TestDomainController }
+        }
+
         It 'keeps a non-default primary group as well as Domain Users' {
             $contractors = New-TestAdGroup -Name 'GG-Contractors' -Rid 1150
             $finance = New-TestAdGroup -Name 'GG-Finance' -Rid 1102

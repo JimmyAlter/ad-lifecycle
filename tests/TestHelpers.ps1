@@ -12,6 +12,8 @@
 #    something to mock. A stub that is ever called without a mock throws.
 # 2. Default mocks. Register-AdDefaultMock mocks EVERY AD cmdlet the module can call, inside the
 #    module's scope: reads return nothing, writes do nothing. Tests override them as needed.
+#    The one exception is Get-ADDomainController, which returns the fictional writable DC
+#    $TestDomainController, so the commands that write can pin it.
 #    On a machine that does have RSAT this means no test can reach a real directory, and
 #    Module.Tests.ps1 fails if the module ever calls an AD cmdlet that is not in this list.
 
@@ -23,52 +25,58 @@ $ExampleConfigPath = Join-Path (Join-Path $RepoRoot 'examples') 'lifecycle.confi
 $AdStubDefinitions = [ordered]@{
     'Get-ADUser'                     = {
         [CmdletBinding()]
-        param($Identity, $Filter, $LDAPFilter, $Properties, $SearchBase, $Server)
+        param($Identity, $Filter, $LDAPFilter, $Properties, $SearchBase, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
     'New-ADUser'                     = {
         [CmdletBinding(SupportsShouldProcess)]
         param($Name, $GivenName, $Surname, $DisplayName, $SamAccountName, $UserPrincipalName, $Path,
             $Department, $Title, $Office, $Manager, $AccountPassword, $ChangePasswordAtLogon, $Enabled,
-            [switch]$PassThru, $Server)
+            [switch]$PassThru, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
     'Set-ADUser'                     = {
         [CmdletBinding(SupportsShouldProcess)]
-        param($Identity, $Description, $Department, $Title, $Manager, $Server)
+        param($Identity, $Description, $Department, $Title, $Manager, $Office, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
     'Disable-ADAccount'              = {
         [CmdletBinding(SupportsShouldProcess)]
-        param($Identity, [switch]$PassThru, $Server)
+        param($Identity, [switch]$PassThru, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
     'Move-ADObject'                  = {
         [CmdletBinding(SupportsShouldProcess)]
-        param($Identity, $TargetPath, [switch]$PassThru, $Server)
+        param($Identity, $TargetPath, [switch]$PassThru, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
     'Get-ADPrincipalGroupMembership' = {
         [CmdletBinding()]
-        param($Identity, $Server)
+        param($Identity, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
     'Add-ADGroupMember'              = {
         [CmdletBinding(SupportsShouldProcess)]
-        param($Identity, $Members, $Server)
+        param($Identity, $Members, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
     'Remove-ADGroupMember'           = {
         [CmdletBinding(SupportsShouldProcess)]
-        param($Identity, $Members, $Server)
+        param($Identity, $Members, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
     'Get-ADComputer'                 = {
         [CmdletBinding()]
-        param($Identity, $Filter, $LDAPFilter, $Properties, $SearchBase, $Server)
+        param($Identity, $Filter, $LDAPFilter, $Properties, $SearchBase, $Server, $Credential)
+        throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
+    }
+    'Get-ADDomainController'         = {
+        [CmdletBinding()]
+        param($Identity, [switch]$Discover, [switch]$Writable, $DomainName, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
 }
+$TestDomainController = 'dc01.corp.example'
 $AdCommandNames = @($AdStubDefinitions.Keys)
 $AdWriteCommandNames = @($AdCommandNames | Where-Object { $_ -notlike 'Get-*' })
 
@@ -87,6 +95,9 @@ function Register-AdDefaultMock {
     # { $Identity -eq 'CN=...' }. With the untyped stubs it changes nothing.
     foreach ($commandName in $AdCommandNames) {
         Mock -CommandName $commandName -ModuleName 'AdLifecycle' -MockWith { } -RemoveParameterType 'Identity', 'Members', 'Manager'
+    }
+    Mock -CommandName 'Get-ADDomainController' -ModuleName 'AdLifecycle' -MockWith {
+        [pscustomobject]@{ HostName = @('dc01.corp.example'); Name = 'DC01' }
     }
 }
 

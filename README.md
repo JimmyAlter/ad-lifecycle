@@ -44,6 +44,10 @@ Every command has comment-based help with examples: `Get-Help New-AdLifecycleUse
   RSAT). Commands that need Active Directory check for the `ActiveDirectory` module when they run
   and stop with a clear `NotInstalled` error (`ActiveDirectoryModuleMissing`) that says how to
   install it.
+- **One domain controller per run.** The three write commands resolve one writable DC at the
+  start (`Get-ADDomainController -Discover -Writable`), or use `-Server`, and send every read and
+  write of the run to it, so a new account is never looked up or added to groups on a DC that has
+  not replicated it yet. `-Credential` is passed to every call as well.
 - **No silent partial failures.** When a step fails after the first write (a group, the move),
   the command reports it and lists it in `FailedGroups`. The joiner reports group failures as
   warnings rather than errors on purpose: the account already exists at that point, and a
@@ -77,6 +81,10 @@ Validate the configuration, then set it once for the session so you do not have 
 Test-AdLifecycleConfig -Path C:\ops\lifecycle.config.psd1 -Strict
 $PSDefaultParameterValues['*-AdLifecycle*:ConfigPath'] = 'C:\ops\lifecycle.config.psd1'
 ```
+
+Every command that talks to AD accepts `-Server` and `-Credential`. Without `-Server`, the write
+commands pin one writable domain controller for the whole run; `Get-AdStaleComputer` lets the AD
+module choose. From a machine that is not joined to the domain, pass `-Server`.
 
 ### Joiner
 
@@ -273,10 +281,6 @@ is one suppression, with its justification, on `New-AdInitialPassword`).
 
 - On-premises Active Directory only. No Entra ID, Exchange or licensing, and no Google Workspace
   provisioning (I handle that separately; it is not part of this module).
-- Works against the domain of the machine and account running it. There is no `-Server` or
-  `-Credential` pass-through yet, and no domain controller pinning: in a large multi-DC site the
-  group step right after creating a user can occasionally hit a DC that has not replicated the
-  new account yet (the joiner reports this in `FailedGroups`).
 - The `sAMAccountName` rule is fixed. Names with no Latin letters at all are rejected with an
   error rather than guessed. Two people with the same full name in the same site OU will make
   `New-ADUser` fail on the duplicate CN; nothing is created in that case.

@@ -34,6 +34,14 @@ function Set-AdLifecycleDepartment {
     .PARAMETER ConfigPath
         Path to the .psd1 configuration file. See examples/lifecycle.config.psd1.
 
+    .PARAMETER Server
+        Domain controller to use for every read and write. When omitted, one writable domain
+        controller is located once (Get-ADDomainController -Discover -Writable) and pinned for the
+        whole run, so every step for a user goes to the same DC.
+
+    .PARAMETER Credential
+        Account to connect to Active Directory as. Defaults to the current user.
+
     .EXAMPLE
         Set-AdLifecycleDepartment -Identity jpena -Department Sales -ConfigPath .\lifecycle.config.psd1 -WhatIf
 
@@ -71,12 +79,20 @@ function Set-AdLifecycleDepartment {
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string]$ConfigPath
+        [string]$ConfigPath,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$Server,
+
+        [System.Management.Automation.PSCredential]
+        [System.Management.Automation.Credential()]
+        $Credential = [System.Management.Automation.PSCredential]::Empty
     )
 
     begin {
         Assert-AdModule
         $config = Get-AdLifecycleConfig -Path $ConfigPath
+        $connection = Get-AdLifecycleConnection -Server $Server -Credential $Credential -DiscoverWritable
 
         $targetKey = Resolve-AdLifecycleConfigKey -Table $config.Departments -Name $Department
         if (-not $targetKey) {
@@ -87,7 +103,7 @@ function Set-AdLifecycleDepartment {
 
     process {
         try {
-            $user = Get-ADUser -Identity $Identity -Properties Department -ErrorAction Stop
+            $user = Get-ADUser -Identity $Identity -Properties Department -ErrorAction Stop @connection
             if (-not $user -or -not $user.DistinguishedName) {
                 throw 'No such user.'
             }
@@ -134,7 +150,7 @@ function Set-AdLifecycleDepartment {
         }
 
         try {
-            $currentGroups = @(Get-ADPrincipalGroupMembership -Identity $userDn -ErrorAction Stop | ForEach-Object { $_.SamAccountName })
+            $currentGroups = @(Get-ADPrincipalGroupMembership -Identity $userDn -ErrorAction Stop @connection | ForEach-Object { $_.SamAccountName })
         } catch {
             Write-Error -Message ("Could not read the group memberships of '{0}'; nothing was changed: {1}" -f $userDn, $_.Exception.Message) -Category ReadError -TargetObject $Identity
             return
@@ -168,7 +184,7 @@ function Set-AdLifecycleDepartment {
         $failed = [System.Collections.Generic.List[string]]::new()
         foreach ($group in $toAdd) {
             try {
-                Add-ADGroupMember -Identity $group -Members $userDn -Confirm:$false -ErrorAction Stop
+                Add-ADGroupMember -Identity $group -Members $userDn -Confirm:$false -ErrorAction Stop @connection
             } catch {
                 $failed.Add($group)
                 Write-Error -Message ("Adding '{0}' to group '{1}' failed: {2}" -f $user.SamAccountName, $group, $_.Exception.Message) -Category WriteError -TargetObject $group
@@ -176,7 +192,7 @@ function Set-AdLifecycleDepartment {
         }
         foreach ($group in $toRemove) {
             try {
-                Remove-ADGroupMember -Identity $group -Members $userDn -Confirm:$false -ErrorAction Stop
+                Remove-ADGroupMember -Identity $group -Members $userDn -Confirm:$false -ErrorAction Stop @connection
             } catch {
                 $failed.Add($group)
                 Write-Error -Message ("Removing '{0}' from group '{1}' failed: {2}" -f $user.SamAccountName, $group, $_.Exception.Message) -Category WriteError -TargetObject $group
@@ -184,7 +200,7 @@ function Set-AdLifecycleDepartment {
         }
 
         try {
-            Set-ADUser -Identity $userDn -Department $targetKey -Confirm:$false -ErrorAction Stop
+            Set-ADUser -Identity $userDn -Department $targetKey -Confirm:$false -ErrorAction Stop @connection
         } catch {
             Write-Error -Message ("Setting the Department attribute of '{0}' failed: {1}" -f $user.SamAccountName, $_.Exception.Message) -Category WriteError -TargetObject $Identity
         }
