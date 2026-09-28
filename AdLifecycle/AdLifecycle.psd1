@@ -26,7 +26,13 @@
 
     PrivateData          = @{
         PSData = @{
-            Tags = @('ActiveDirectory', 'AD', 'Provisioning', 'JoinerMoverLeaver', 'Identity', 'Windows')
+            Tags         = @(
+                'ActiveDirectory', 'AD', 'Provisioning', 'JoinerMoverLeaver', 'Identity', 'Windows',
+                'PSEdition_Desktop', 'PSEdition_Core'
+            )
+            ProjectUri   = 'https://github.com/JimmyAlter/ad-lifecycle'
+            LicenseUri   = 'https://github.com/JimmyAlter/ad-lifecycle/blob/main/LICENSE'
+            ReleaseNotes = 'See https://github.com/JimmyAlter/ad-lifecycle/blob/main/CHANGELOG.md'
         }
     }
 }

@@ -51,6 +51,16 @@ Describe 'AdLifecycle manifest' {
         (Get-Module AdLifecycle).RequiredModules | Should -BeNullOrEmpty
     }
 
+    It 'has gallery metadata (project, license, release notes, edition tags)' {
+        $psData = $manifest.PrivateData.PSData
+        $psData.ProjectUri | Should -Be 'https://github.com/JimmyAlter/ad-lifecycle'
+        $psData.LicenseUri | Should -Be 'https://github.com/JimmyAlter/ad-lifecycle/blob/main/LICENSE'
+        $psData.ReleaseNotes | Should -Not -BeNullOrEmpty
+        foreach ($tag in 'PSEdition_Desktop', 'PSEdition_Core', 'Windows', 'ActiveDirectory') {
+            $psData.Tags | Should -Contain $tag
+        }
+    }
+
     It 'lists FunctionsToExport explicitly (no wildcards)' {
         $manifest.FunctionsToExport | Should -Not -Contain '*'
         @($manifest.FunctionsToExport | Sort-Object) | Should -Be $publicNames
