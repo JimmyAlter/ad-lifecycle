@@ -78,7 +78,7 @@ Every command has comment-based help with examples: `Get-Help New-AdLifecycleUse
   not touched. If disabling fails, nothing else is changed.
 - **Refuse the dangerous targets.** The leaver never offboards the built-in Administrator,
   krbtgt or the account running it, and needs `-Force` for protected accounts (`adminCount = 1`
-  or members of Domain, Schema or Enterprise Admins or `BUILTINAdministrators`, also nested).
+  or members of Domain, Schema or Enterprise Admins or `BUILTIN\Administrators`, also nested).
   Re-running it on an account that is already offboarded changes nothing.
 - **Audit trail.** With `-LogPath`, every change is appended as one JSON line (who, when, which
   DC, ticket, what was planned, what failed), without passwords.
