@@ -8,6 +8,18 @@ version is 0, a minor version may contain breaking changes; they are called out 
 
 ## [Unreleased]
 
+### Fixed
+
+- Leaver: the self-offboarding guard missed a `-Credential` given as a UPN whose prefix is not
+  the sAMAccountName. The credential account is now looked up in AD once per run (by UPN, or by
+  sAMAccountName) and compared by SID; the run stops if it cannot be found.
+
+### Added
+
+- Leaver: members of Domain Admins, Schema Admins, Enterprise Admins or BUILTIN\Administrators
+  (direct, nested via `tokenGroups`, or as primary group) are refused unless `-Force`, like
+  `adminCount = 1`.
+
 ## [0.2.0] - 2026-09-28
 
 ### Added

@@ -91,19 +91,120 @@ Describe 'Disable-AdLifecycleUser' {
             Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
         }
 
-        It 'refuses the -Credential account (<UserName>)' -ForEach @(
-            @{ UserName = 'CORP\svc-lifecycle' }
-            @{ UserName = 'svc-lifecycle@corp.example' }
+        Context '-Credential account' {
+            BeforeAll {
+                # sAMAccountName svc-prov, UPN provisioning@corp.example: the UPN prefix is not the
+                # sAMAccountName, which a name comparison would miss.
+                $serviceAccount = New-TestAdUser -SamAccountName 'svc-prov' -DistinguishedName 'CN=svc-prov,OU=Service,OU=Corp,DC=corp,DC=example' -Rid 1701
+            }
+
+            BeforeEach {
+                Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith { $serviceAccount }
+                Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $LDAPFilter -like '*(userPrincipalName=provisioning@corp.example)*' } -MockWith { $serviceAccount }
+                Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $LDAPFilter -like '*(sAMAccountName=svc-prov)*' } -MockWith { $serviceAccount }
+            }
+
+            It 'refuses the -Credential account given as <UserName>' -ForEach @(
+                @{ UserName = 'provisioning@corp.example'; Filter = '*(userPrincipalName=provisioning@corp.example)*' }
+                @{ UserName = 'CORP\svc-prov'; Filter = '*(sAMAccountName=svc-prov)*' }
+                @{ UserName = 'svc-prov'; Filter = '*(sAMAccountName=svc-prov)*' }
+                @{ UserName = 'svc-prov@corp.example'; Filter = '*(sAMAccountName=svc-prov)*' }
+            ) {
+                $credential = [pscredential]::new($UserName, [securestring]::new())
+
+                $run = Invoke-GuardedLeaver -Extra @{ Credential = $credential }
+
+                "$($run.Errors[0])" | Should -BeLike "*'svc-prov': it is the account running this command*"
+                Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+                    $LDAPFilter -like $Filter -and $Credential.UserName -eq $UserName -and $Server -eq $TestDomainController
+                }
+                Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
+            }
+
+            It 'resolves the credential once per run, not per user' {
+                $credential = [pscredential]::new('provisioning@corp.example', [securestring]::new())
+
+                @('lmunoz', 'lmunoz') | Disable-AdLifecycleUser -Ticket 'INC-9' -ConfigPath $ExampleConfigPath -Credential $credential -Confirm:$false | Out-Null
+
+                Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $LDAPFilter -like '*userPrincipalName=*' }
+                Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 2 -Exactly
+            }
+
+            It 'offboards another user when running with -Credential' {
+                $credential = [pscredential]::new('provisioning@corp.example', [securestring]::new())
+
+                $result = Disable-AdLifecycleUser @leaver -Credential $credential -Confirm:$false
+
+                $result.Applied | Should -BeTrue
+            }
+
+            It 'refuses to start when the -Credential account cannot be found' {
+                $credential = [pscredential]::new('ghost@corp.example', [securestring]::new())
+
+                { Disable-AdLifecycleUser @leaver -Credential $credential -Confirm:$false } |
+                    Should -Throw "*-Credential account 'ghost@corp.example' was not found*"
+                Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 0 -Exactly -ParameterFilter { $Identity -eq 'lmunoz' }
+                Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
+            }
+
+            It 'refuses to start when the -Credential lookup fails' {
+                Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $LDAPFilter -like '*(userPrincipalName=provisioning@corp.example)*' } -MockWith { throw 'The server is not operational' }
+                $credential = [pscredential]::new('provisioning@corp.example', [securestring]::new())
+
+                { Disable-AdLifecycleUser @leaver -Credential $credential -Confirm:$false } |
+                    Should -Throw "*Could not look up the -Credential account*not operational*"
+            }
+
+            It 'escapes LDAP special characters in the credential name' {
+                $credential = [pscredential]::new('a*b(c)@corp.example', [securestring]::new())
+
+                { Disable-AdLifecycleUser @leaver -Credential $credential -Confirm:$false } | Should -Throw '*was not found*'
+                Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+                    $LDAPFilter -eq '(&(objectCategory=person)(objectClass=user)(userPrincipalName=a\2ab\28c\29@corp.example))'
+                }
+                Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+                    $LDAPFilter -eq '(&(objectCategory=person)(objectClass=user)(sAMAccountName=a\2ab\28c\29))'
+                }
+            }
+        }
+
+        It 'refuses a member of <Group> without -Force (<Source>)' -ForEach @(
+            @{ Group = 'Domain Admins'; Source = 'nested, tokenGroups'; Property = @{ tokenGroups = @('S-1-5-21-1004336348-1177238915-682003330-1105', 'S-1-5-21-1004336348-1177238915-682003330-512') } }
+            @{ Group = 'Schema Admins'; Source = 'tokenGroups'; Property = @{ tokenGroups = @('S-1-5-21-1004336348-1177238915-682003330-518') } }
+            @{ Group = 'Enterprise Admins'; Source = 'forest root domain SID'; Property = @{ tokenGroups = @('S-1-5-21-111-222-333-519') } }
+            @{ Group = 'Administrators'; Source = 'BUILTIN'; Property = @{ tokenGroups = @('S-1-5-32-544') } }
+            @{ Group = 'Domain Admins'; Source = 'primary group'; Property = @{ PrimaryGroupID = 512 } }
+            @{ Group = 'Domain Admins'; Source = 'memberOf, no tokenGroups'; Property = @{ MemberOf = @('CN=Domain Admins,CN=Users,DC=corp,DC=example') } }
         ) {
             Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
-                New-TestAdUser -SamAccountName 'svc-lifecycle' -DistinguishedName 'CN=svc-lifecycle,OU=Service,OU=Corp,DC=corp,DC=example' -Rid 1701
+                New-TestAdUser -SamAccountName 'ops.admin' -DistinguishedName 'CN=Ops Admin,OU=Users,OU=Remote,OU=Sites,OU=Corp,DC=corp,DC=example' -Rid 1703 -Property $Property
             }
-            $credential = [pscredential]::new($UserName, [securestring]::new())
 
-            $run = Invoke-GuardedLeaver -Extra @{ Credential = $credential }
+            $run = Invoke-GuardedLeaver
 
-            "$($run.Errors[0])" | Should -BeLike '*it is the account running this command*'
+            "$($run.Errors[0])" | Should -BeLike "*'ops.admin': it is a member of $Group; review it and use -Force*"
             Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+
+        It 'offboards a member of Domain Admins with -Force' {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
+                New-TestAdUser -SamAccountName 'ops.admin' -DistinguishedName 'CN=Ops Admin,OU=Users,OU=Remote,OU=Sites,OU=Corp,DC=corp,DC=example' -Rid 1703 `
+                    -Property @{ tokenGroups = @("$TestDomainSid-512") }
+            }
+
+            $run = Invoke-GuardedLeaver -Extra @{ Force = $true }
+
+            $run.Errors | Should -BeNullOrEmpty
+            Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 1 -Exactly
+        }
+
+        It 'does not treat ordinary groups with RIDs ending in 512 as privileged' {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
+                New-TestAdUser -SamAccountName 'plain1' -DistinguishedName 'CN=Plain One,OU=Users,OU=Remote,OU=Sites,OU=Corp,DC=corp,DC=example' -Rid 1704 `
+                    -Property @{ tokenGroups = @("$TestDomainSid-1512", "$TestDomainSid-5120") }
+            }
+
+            (Invoke-GuardedLeaver).Errors | Should -BeNullOrEmpty
         }
 
         It 'refuses an account with adminCount = 1 without -Force, also under -WhatIf' {
@@ -132,9 +233,11 @@ Describe 'Disable-AdLifecycleUser' {
             Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 1 -Exactly
         }
 
-        It 'reads adminCount from AD' {
+        It 'reads adminCount and tokenGroups from AD' {
             Disable-AdLifecycleUser @leaver -WhatIf | Out-Null
-            Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Properties -contains 'adminCount' }
+            Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+                $Properties -contains 'adminCount' -and $Properties -contains 'tokenGroups'
+            }
         }
     }
 

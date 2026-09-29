@@ -20,8 +20,10 @@ function Disable-AdLifecycleUser {
 
         Safety guard: the command refuses, with an error and without changing anything, the
         built-in Administrator (RID 500), krbtgt (RID 502) and the account running it (the
-        current Windows user, or the -Credential account). Accounts with adminCount = 1 (current
-        or former members of protected groups) are refused unless -Force is used.
+        current Windows user, and the -Credential account, looked up in AD by UPN or
+        sAMAccountName and compared by SID). Protected accounts are refused unless -Force is
+        used: adminCount = 1, or membership (also nested, from tokenGroups) of Domain Admins,
+        Schema Admins, Enterprise Admins or BUILTIN\Administrators.
 
         Idempotent: an account that is already disabled and already in DisabledOU is skipped with
         a warning (Skipped = $true), so re-running a bulk CSV does not overwrite the original
@@ -57,9 +59,10 @@ function Disable-AdLifecycleUser {
         Optional CSV file to append the recorded memberships to (UTF-8). Created if missing.
 
     .PARAMETER Force
-        Allows offboarding accounts with adminCount = 1 (current or former members of protected
-        groups such as Domain Admins). It does not lift the refusal for the built-in Administrator
-        (RID 500), krbtgt (RID 502) or your own account, and it does not skip the confirmation.
+        Allows offboarding protected accounts: adminCount = 1, or members of Domain Admins,
+        Schema Admins, Enterprise Admins or BUILTIN\Administrators. It does not lift the refusal
+        for the built-in Administrator (RID 500), krbtgt (RID 502) or your own account, and it
+        does not skip the confirmation.
 
     .PARAMETER LogPath
         Optional audit log file: one JSON line per offboarded user (UTC timestamp, operator,
@@ -131,18 +134,14 @@ function Disable-AdLifecycleUser {
         $operator = Get-AdLifecycleOperator
         $auditLog = Resolve-AdLifecycleLogPath -LogPath $LogPath -Config $config
 
-        $callerSid = Get-AdLifecycleCallerSid
-        # With -Credential the AD calls run as that account: protect it as well.
-        $credentialName = $null
-        if ($connection.ContainsKey('Credential')) {
-            # DOMAIN\name or name@domain -> name
-            $credentialName = [string]$connection['Credential'].UserName -replace '^.*\\', '' -replace '@.*$', ''
-        }
+        # The account running this command, and the -Credential account (resolved in AD once,
+        # by UPN or sAMAccountName, and compared by SID), are never offboarded.
+        $callerSids = @(@(Get-AdLifecycleCallerSid) + @(Resolve-AdLifecycleCredentialSid -Connection $connection) | Where-Object { $_ })
     }
 
     process {
         try {
-            $user = Get-ADUser -Identity $Identity -Properties Description, PrimaryGroupID, MemberOf, adminCount -ErrorAction Stop @connection
+            $user = Get-ADUser -Identity $Identity -Properties Description, PrimaryGroupID, MemberOf, adminCount, tokenGroups -ErrorAction Stop @connection
             if (-not $user -or -not $user.DistinguishedName) {
                 throw 'No such user.'
             }
@@ -152,22 +151,8 @@ function Disable-AdLifecycleUser {
         }
         $userDn = [string]$user.DistinguishedName
 
-        # Safety guard, before anything else is read or planned. The built-in Administrator
-        # (RID 500), krbtgt (RID 502) and the caller's own account are never offboarded here;
-        # protected accounts (adminCount = 1) only with -Force.
-        $userSid = [string]$user.SID
-        $rid = $userSid.Substring($userSid.LastIndexOf('-') + 1)
-        $refusal = $null
-        if ($rid -eq '500') {
-            $refusal = 'it is the built-in Administrator account (RID 500)'
-        } elseif ($rid -eq '502') {
-            $refusal = 'it is the krbtgt account (RID 502)'
-        } elseif (($callerSid -and $userSid -eq $callerSid) -or
-            ($credentialName -and [string]$user.SamAccountName -eq $credentialName)) {
-            $refusal = 'it is the account running this command'
-        } elseif ([string]$user.adminCount -eq '1' -and -not $Force) {
-            $refusal = 'adminCount is 1 (it is, or was, in a protected group such as Domain Admins); review it and use -Force to offboard it anyway'
-        }
+        # Safety guard, before anything else is read or planned: see Get-AdLifecycleProtectionIssue.
+        $refusal = Get-AdLifecycleProtectionIssue -User $user -CallerSid $callerSids -Force:$Force
         if ($refusal) {
             Write-Error -Message ("Refusing to offboard '{0}': {1}. Nothing was changed." -f $user.SamAccountName, $refusal) -Category PermissionDenied -TargetObject $Identity
             return

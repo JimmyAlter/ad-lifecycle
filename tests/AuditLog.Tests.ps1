@@ -217,6 +217,9 @@ Describe 'Audit log' {
         It 'records the -Credential user' {
             $log = Join-Path $TestDrive 'leaver-cred.jsonl'
             $credential = [pscredential]::new('CORP\svc-lifecycle', [securestring]::new())
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $LDAPFilter -like '*(sAMAccountName=svc-lifecycle)*' } -MockWith {
+                New-TestAdUser -SamAccountName 'svc-lifecycle' -DistinguishedName 'CN=svc-lifecycle,OU=Service,OU=Corp,DC=corp,DC=example' -Rid 1701
+            }
 
             Disable-AdLifecycleUser -Identity lmunoz -Ticket 'INC-3' -ConfigPath $ExampleConfigPath -LogPath $log -Credential $credential -Confirm:$false | Out-Null
 

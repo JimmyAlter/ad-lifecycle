@@ -77,7 +77,8 @@ Every command has comment-based help with examples: `Get-Help New-AdLifecycleUse
   optionally in a CSV, before removing anything. If the CSV cannot be written, the account is
   not touched. If disabling fails, nothing else is changed.
 - **Refuse the dangerous targets.** The leaver never offboards the built-in Administrator,
-  krbtgt or the account running it, and needs `-Force` for protected (`adminCount = 1`) accounts.
+  krbtgt or the account running it, and needs `-Force` for protected accounts (`adminCount = 1`
+  or members of Domain, Schema or Enterprise Admins or `BUILTINAdministrators`, also nested).
   Re-running it on an account that is already offboarded changes nothing.
 - **Audit trail.** With `-LogPath`, every change is appended as one JSON line (who, when, which
   DC, ticket, what was planned, what failed), without passwords.
@@ -227,9 +228,11 @@ Applied       : False
 ```
 
 `-Ticket` is mandatory. The leaver refuses, without changing anything, the built-in
-Administrator (RID 500), krbtgt (RID 502) and the account running it (the current Windows user
-or the `-Credential` account); accounts with `adminCount = 1` (current or former members of
-protected groups) need `-Force`. An account that is already disabled and already in
+Administrator (RID 500), krbtgt (RID 502) and the account running it: the current Windows user
+and the `-Credential` account, which is looked up in AD once (by UPN, or by `sAMAccountName`
+for `DOMAIN\name`) and compared by SID. Protected accounts need `-Force`: `adminCount = 1`, or
+membership, also nested (`tokenGroups`), of Domain Admins, Schema Admins, Enterprise Admins or
+BUILTIN\Administrators. An account that is already disabled and already in
 `DisabledOU` is skipped with a warning (`Skipped = True`), so re-running a bulk CSV does not
 overwrite the original description and ticket. The primary group and Domain Users are kept, matched by RID (the
 `primaryGroupID` and 513) rather than by name, so it also works on localized domains
@@ -350,7 +353,8 @@ without any domain controller:
 - **One DC per run:** every read and write of a run carries the same `-Server` (discovered once,
   or given), and `-Credential` is passed through.
 - **Leaver:** `-Ticket` is mandatory and validated; RID 500, RID 502, the caller's own account
-  and `adminCount = 1` (without `-Force`) are refused; already-offboarded accounts are skipped;
+  (also a `-Credential` given as a UPN), `adminCount = 1` and privileged group members (without
+  `-Force`) are refused; already-offboarded accounts are skipped;
   Domain Users and the primary group are kept (also when localized); memberships come from
   `memberOf` and are exported before the first write; a failed disable stops everything else; a
   failed CSV write changes nothing.
