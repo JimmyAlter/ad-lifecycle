@@ -352,10 +352,10 @@ function Disable-AdLifecycleUser {
                     Disable       = $true
                     ResetPassword = [bool]$ResetPassword
                     Description   = $description
-                    RemoveGroups = @($toRemove | ForEach-Object { $_.Name })
-                    KeptGroups   = @($kept | ForEach-Object { $_.Name })
-                    MoveTo       = $moveTo
-                    ExportPath   = $result.ExportPath
+                    RemoveGroups  = @($toRemove | ForEach-Object { $_.Name })
+                    KeptGroups    = @($kept | ForEach-Object { $_.Name })
+                    MoveTo        = $moveTo
+                    ExportPath    = $result.ExportPath
                 }
                 Write-AdLifecycleAuditLog -Path $auditLog -Command 'Disable-AdLifecycleUser' -Target ([string]$user.SamAccountName) `
                     -DistinguishedName $userDn -Ticket $Ticket -Changes $changes -Applied $result.Applied `
