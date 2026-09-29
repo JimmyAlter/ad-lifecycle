@@ -203,12 +203,13 @@ not exist, nothing is changed for that user.
 A full internal transfer (department, site, title, manager) is one command and one
 confirmation. Only what differs is written: groups are added, then removed, then one
 `Set-ADUser` sets the attributes (`Department`, `Title`, `Manager`, `Office` = site name), and the
-account is moved to the new site's OU last:
+account is moved to the new site's OU last. For a Finance user who holds every group of the Finance template
+(output from the example configuration):
 
 ```text
 PS> Set-AdLifecycleUser -Identity jpena -Department Sales -Site Cordoba -Title 'Account Executive' -Manager mlopez -WhatIf
 
-What if: Performing the operation "Change department 'Finance' -> 'Sales'; add to: GG-Sales, GG-Share-Sales-RW, GG-App-CRM; remove from: GG-Finance, GG-Share-Finance-RW; set Title 'Account Executive'; set Manager 'CN=Marta Lopez,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example'; set Office 'Cordoba'; move to 'OU=Users,OU=Cordoba,OU=Sites,OU=Corp,DC=corp,DC=example'" on target "jpena (CN=Jose Pena,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example)".
+What if: Performing the operation "Change department 'Finance' -> 'Sales'; add to: GG-Sales, GG-Share-Sales-RW, GG-App-CRM; remove from: GG-Finance, GG-Share-Finance-RW, GG-App-ERP; set Title 'Account Executive'; set Manager 'CN=Marta Lopez,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example'; set Office 'Cordoba'; move to 'OU=Users,OU=Cordoba,OU=Sites,OU=Corp,DC=corp,DC=example'" on target "jpena (CN=Jose Pena,OU=Users,OU=Madrid,OU=Sites,OU=Corp,DC=corp,DC=example)".
 ```
 
 `-Department`, `-Site`, `-Title` and `-Manager` are each optional, but at least one is required.
