@@ -138,13 +138,27 @@ Describe 'Disable-AdLifecycleUser' {
                 $result.Applied | Should -BeTrue
             }
 
-            It 'refuses to start when the -Credential account cannot be found' {
-                $credential = [pscredential]::new('ghost@corp.example', [securestring]::new())
+            It 'carries on when the -Credential account is from another (trusted) domain' {
+                # Not in the target domain, so it cannot be any of the users the leaver reads there.
+                $credential = [pscredential]::new('OTHERDOM\ops.admin', [securestring]::new())
 
-                { Disable-AdLifecycleUser @leaver -Credential $credential -Confirm:$false } |
-                    Should -Throw "*-Credential account 'ghost@corp.example' was not found*"
-                Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 0 -Exactly -ParameterFilter { $Identity -eq 'lmunoz' }
-                Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 0 -Exactly
+                $result = Disable-AdLifecycleUser @leaver -Credential $credential -Confirm:$false -Verbose 4>&1 |
+                    Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] -or $_.Message -like '*-Credential*' }
+
+                $verbose = @($result | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
+                "$($verbose[0].Message)" | Should -BeLike "*-Credential account 'OTHERDOM\ops.admin' is not in the target domain*"
+                ($result | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] }).Applied | Should -BeTrue
+                Should -Invoke Disable-ADAccount -ModuleName AdLifecycle -Times 1 -Exactly
+            }
+
+            It 'still refuses a user of the target domain whose sAMAccountName matches a DOMAIN\name credential' {
+                # DOMAIN\name is looked up by sAMAccountName in the target domain; a namesake there is
+                # refused, which errs on the safe side.
+                $credential = [pscredential]::new('OTHERDOM\svc-prov', [securestring]::new())
+
+                $run = Invoke-GuardedLeaver -Extra @{ Credential = $credential }
+
+                "$($run.Errors[0])" | Should -BeLike '*it is the account running this command*'
             }
 
             It 'refuses to start when the -Credential lookup fails' {
@@ -158,7 +172,7 @@ Describe 'Disable-AdLifecycleUser' {
             It 'escapes LDAP special characters in the credential name' {
                 $credential = [pscredential]::new('a*b(c)@corp.example', [securestring]::new())
 
-                { Disable-AdLifecycleUser @leaver -Credential $credential -Confirm:$false } | Should -Throw '*was not found*'
+                Disable-AdLifecycleUser @leaver -Credential $credential -Confirm:$false | Out-Null
                 Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
                     $LDAPFilter -eq '(&(objectCategory=person)(objectClass=user)(userPrincipalName=a\2ab\28c\29@corp.example))'
                 }

@@ -11,8 +11,15 @@ function Resolve-AdLifecycleCredentialSid {
           UPNs such as name@dns.domain are not stored), by the part before @ as sAMAccountName.
         - DOMAIN\name or name: looked up by sAMAccountName.
 
-        Returns nothing when the connection has no credential. Throws when the account cannot be
-        found, so a command never runs with an identity it could not check.
+        The lookup runs in the target domain (the pinned DC), which is also the only place the
+        leaver reads and changes users. An account that is not there (for example a credential
+        from a trusted domain) can therefore never be one of the users offboarded: nothing is
+        returned and the run continues, with a verbose message. No global catalog lookup is
+        needed for that reason.
+
+        Returns nothing when the connection has no credential or the account is not in the target
+        domain. Throws when the lookup itself fails, so a command never runs with an identity it
+        could not check.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -62,5 +69,5 @@ function Resolve-AdLifecycleCredentialSid {
             return [string]$account.SID
         }
     }
-    throw ("The -Credential account '{0}' was not found in Active Directory." -f $userName)
+    Write-Verbose ("The -Credential account '{0}' is not in the target domain, so it cannot be one of the users changed; continuing." -f $userName)
 }
