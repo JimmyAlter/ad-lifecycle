@@ -8,6 +8,21 @@ version is 0, a minor version may contain breaking changes; they are called out 
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-29
+
+### Changed
+
+- Leaver: a `-Credential` account that is not in the target domain (for example from a trusted
+  domain) no longer stops the run. It cannot be one of the users the leaver reads and changes,
+  all of which come from the target domain; a verbose message says so. A failing lookup still
+  stops the run.
+
+### Documentation
+
+- README: `-ResetPassword` needs the "Reset password" permission; the `-Credential` lookup scope
+  is described under Limitations.
+- CHANGELOG 0.3.0: the mover's new guard is listed under Changed as a possibly breaking change.
+
 ## [0.3.0] - 2026-09-29
 
 ### Fixed
@@ -29,6 +44,10 @@ version is 0, a minor version may contain breaking changes; they are called out 
 
 ### Changed
 
+- **Possibly breaking:** `Set-AdLifecycleUser` (and its alias `Set-AdLifecycleDepartment`) now
+  refuses accounts with `adminCount = 1` or in Domain Admins, Schema Admins, Enterprise Admins
+  or BUILTIN\Administrators unless `-Force` is given, and always refuses RID 500 and 502. Scripts
+  that moved such accounts with 0.2.0 must add `-Force`.
 - Joiner: when the sAMAccountName needs a numeric suffix, the object name (CN) is
   `Display Name (sam)` so a namesake in the same OU no longer makes `New-ADUser` fail on a
   duplicate CN. The display name is unchanged.
@@ -101,7 +120,8 @@ First public release.
 - Pester 5 suite with the AD cmdlets stubbed and mocked; PSScriptAnalyzer; CI on Windows
   PowerShell 5.1, PowerShell 7 on Windows and PowerShell 7 on Linux.
 
-[Unreleased]: https://github.com/JimmyAlter/ad-lifecycle/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/JimmyAlter/ad-lifecycle/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/JimmyAlter/ad-lifecycle/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/JimmyAlter/ad-lifecycle/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/JimmyAlter/ad-lifecycle/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/JimmyAlter/ad-lifecycle/releases/tag/v0.1.0

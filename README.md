@@ -110,7 +110,8 @@ Every command has comment-based help with examples: `Get-Help New-AdLifecycleUse
   - Windows Server: `Install-WindowsFeature RSAT-AD-PowerShell`
 - An account allowed to create users in the site OUs, manage the groups in the templates, update
   user attributes (Department, Title, Manager, Office, Description), disable accounts, and move
-  users between site OUs and into the disabled OU.
+  users between site OUs and into the disabled OU. `Disable-AdLifecycleUser -ResetPassword` also
+  needs the "Reset password" permission on the users it offboards.
 
 ## Install
 
@@ -351,7 +352,7 @@ Departments.Finance Has no groups. Every department needs at least one group.
 
 ## Testing
 
-The Pester 5 suite is the main point of this repository (280 tests; Pester reports about 98% of
+The Pester 5 suite is the main point of this repository (281 tests; Pester reports about 98% of
 the module's commands covered on Windows PowerShell 5.1, and CI fails below 90%). It proves,
 without any domain controller:
 
@@ -422,6 +423,11 @@ posts a table with the test count and the coverage to the run's summary page.
 - The mover applies a template diff; it is not a reconciler.
 - The leaver does not handle mailboxes, home folders or licenses, and does not set
   `AccountExpirationDate` (disable, plus `-ResetPassword` if wanted, is the offboarding state).
+- The leaver's own-account check looks the `-Credential` account up in the target domain only.
+  A credential from another (trusted) domain is simply not found there and the run continues:
+  that account cannot be one of the users the leaver reads and changes, which all come from the
+  target domain. A `DOMAIN\name` credential is matched by `sAMAccountName`, so a user of the
+  target domain with the same `sAMAccountName` is refused (the safe direction).
 - `lastLogonTimestamp` is replicated with a delay of up to 14 days by default, so stale-computer
   results are not precise for short windows.
 - Tested with mocks. The suite has not been run against a live domain in CI.
