@@ -10,6 +10,7 @@ function Disable-AdLifecycleUser {
            appends it to a CSV before anything is changed (if the CSV cannot be written, the user
            is left untouched).
         2. Disables the account. If this fails, nothing else is changed for that user.
+           With -ResetPassword, then sets a random 64-character password that is not kept.
         3. Sets the description to "Disabled yyyy-MM-dd by <operator> - ticket <id>".
         4. Removes every group membership except the primary group and Domain Users. Both are
            matched by RID (primaryGroupID and 513), not by name, so localized domains work.
@@ -64,6 +65,11 @@ function Disable-AdLifecycleUser {
         for the built-in Administrator (RID 500), krbtgt (RID 502) or your own account, and it
         does not skip the confirmation.
 
+    .PARAMETER ResetPassword
+        After disabling, reset the password to a random 64-character value that is discarded:
+        it is not returned, printed or logged. Part of the same confirmation. A failure is
+        reported as an error and the remaining steps still run.
+
     .PARAMETER LogPath
         Optional audit log file: one JSON line per offboarded user (UTC timestamp, operator,
         ticket, planned changes, result). Overrides LogPath from the configuration. The folder
@@ -108,6 +114,8 @@ function Disable-AdLifecycleUser {
         [string]$ExportPath,
 
         [switch]$Force,
+
+        [switch]$ResetPassword,
 
         [ValidateNotNullOrEmpty()]
         [string]$LogPath,
@@ -178,6 +186,7 @@ function Disable-AdLifecycleUser {
                 FailedGroups        = @()
                 TargetOU            = $disabledOu
                 ExportPath          = $null
+                PasswordReset       = $false
                 Skipped             = $true
                 Applied             = $false
             }
@@ -211,12 +220,16 @@ function Disable-AdLifecycleUser {
             FailedGroups        = @()
             TargetOU            = $disabledOu
             ExportPath          = $null
+            PasswordReset       = $false
             Skipped             = $false
             Applied             = $false
         }
 
         $steps = [System.Collections.Generic.List[string]]::new()
         $steps.Add('Disable the account')
+        if ($ResetPassword) {
+            $steps.Add('reset the password to a random value that is not kept')
+        }
         $steps.Add("set description '$description'")
         if ($toRemove.Count -gt 0) {
             $steps.Add(('remove from {0} group(s): {1}' -f $toRemove.Count, ($result.RemovedGroups -join ', ')))
@@ -276,6 +289,26 @@ function Disable-AdLifecycleUser {
             }
             $result.Applied = $true
 
+            if ($ResetPassword) {
+                # A new random password that nobody sees: generated, set, and dropped. It is not
+                # returned, printed or logged. Old credentials cached anywhere stop working.
+                $newPassword = $null
+                try {
+                    $newPassword = New-AdInitialPassword -Length 64
+                    Set-ADAccountPassword -Identity $userDn -Reset -NewPassword $newPassword -Confirm:$false -ErrorAction Stop @connection
+                    $result.PasswordReset = $true
+                } catch {
+                    $message = "'{0}' is disabled, but resetting its password failed: {1}" -f $userDn, $_.Exception.Message
+                    $errors.Add($message)
+                    Write-Error -Message $message -Category WriteError -TargetObject $Identity
+                } finally {
+                    if ($newPassword) {
+                        $newPassword.Dispose()
+                    }
+                    $newPassword = $null
+                }
+            }
+
             try {
                 Set-ADUser -Identity $userDn -Description $description -Confirm:$false -ErrorAction Stop @connection
             } catch {
@@ -316,8 +349,9 @@ function Disable-AdLifecycleUser {
                     $moveTo = $disabledOu
                 }
                 $changes = [ordered]@{
-                    Disable      = $true
-                    Description  = $description
+                    Disable       = $true
+                    ResetPassword = [bool]$ResetPassword
+                    Description   = $description
                     RemoveGroups = @($toRemove | ForEach-Object { $_.Name })
                     KeptGroups   = @($kept | ForEach-Object { $_.Name })
                     MoveTo       = $moveTo

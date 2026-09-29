@@ -266,6 +266,73 @@ Describe 'Disable-AdLifecycleUser' {
         }
     }
 
+    Context '-ResetPassword' {
+        It 'resets the password to a random 64-character value after disabling, and does not return it' {
+            $script:order = [System.Collections.Generic.List[string]]::new()
+            $script:resetTo = $null
+            Mock Disable-ADAccount -ModuleName AdLifecycle -MockWith { $script:order.Add('disable') }
+            Mock Set-ADAccountPassword -ModuleName AdLifecycle -MockWith {
+                $script:order.Add('reset')
+                $script:resetTo = ConvertFrom-TestSecureString $NewPassword
+            }
+
+            $result = Disable-AdLifecycleUser @leaver -ResetPassword -Confirm:$false
+
+            $result.PasswordReset | Should -BeTrue
+            @($script:order) | Should -Be @('disable', 'reset')
+            $script:resetTo.Length | Should -Be 64
+            Should -Invoke Set-ADAccountPassword -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+                $Identity -eq $userDn -and $Reset -and $NewPassword -is [securestring] -and $Server -eq $TestDomainController
+            }
+            @($result.PSObject.Properties | Where-Object { "$($_.Value)" -like "*$script:resetTo*" }) |
+                Should -BeNullOrEmpty -Because 'the new password is discarded'
+        }
+
+        It 'never logs the password, and records that it was reset' {
+            $log = Join-Path $TestDrive 'reset.jsonl'
+            $script:resetTo = $null
+            Mock Set-ADAccountPassword -ModuleName AdLifecycle -MockWith { $script:resetTo = ConvertFrom-TestSecureString $NewPassword }
+
+            Disable-AdLifecycleUser @leaver -ResetPassword -LogPath $log -Confirm:$false | Out-Null
+
+            $text = Get-Content -LiteralPath $log -Raw
+            $text | Should -Not -Match ([regex]::Escape($script:resetTo))
+            ($text | ConvertFrom-Json).Changes.ResetPassword | Should -BeTrue
+        }
+
+        It 'shows the reset in the plan and does nothing under -WhatIf' {
+            Mock Write-Verbose -ModuleName AdLifecycle -MockWith { }
+            $plan = Disable-AdLifecycleUser @leaver -ResetPassword -WhatIf
+
+            $plan.PasswordReset | Should -BeFalse
+            Should -Invoke Set-ADAccountPassword -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+
+        It 'does not reset the password without -ResetPassword' {
+            (Disable-AdLifecycleUser @leaver -Confirm:$false).PasswordReset | Should -BeFalse
+            Should -Invoke Set-ADAccountPassword -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+
+        It 'reports a failed reset and carries on with the other steps' {
+            Mock Set-ADAccountPassword -ModuleName AdLifecycle -MockWith { throw 'Access is denied' }
+
+            $run = Invoke-Captured { Disable-AdLifecycleUser @leaver -ResetPassword -Confirm:$false -ErrorAction Continue }
+
+            $run.Output[0].Applied | Should -BeTrue
+            $run.Output[0].PasswordReset | Should -BeFalse
+            "$($run.Errors[0])" | Should -BeLike "*is disabled, but resetting its password failed: Access is denied"
+            Should -Invoke Move-ADObject -ModuleName AdLifecycle -Times 1 -Exactly
+        }
+
+        It 'does not reset the password when disabling fails' {
+            Mock Disable-ADAccount -ModuleName AdLifecycle -MockWith { throw 'Access is denied' }
+
+            $null = Invoke-Captured { Disable-AdLifecycleUser @leaver -ResetPassword -Confirm:$false -ErrorAction Continue }
+
+            Should -Invoke Set-ADAccountPassword -ModuleName AdLifecycle -Times 0 -Exactly
+        }
+    }
+
     Context 'with -Confirm:$false' {
         It 'disables the account' {
             Disable-AdLifecycleUser @leaver -Confirm:$false | Out-Null

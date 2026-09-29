@@ -250,6 +250,11 @@ Import-Csv .\leavers.csv | Disable-AdLifecycleUser -ExportPath .\removed-members
 `leavers.csv` needs `SamAccountName` and `Ticket` columns. The export has one row per membership
 (user, group name and DN, kept or removed, ticket, operator, timestamp) and is appended to.
 
+With `-ResetPassword`, the leaver also sets a random 64-character password right after
+disabling the account (same confirmation). The new password is generated, set and discarded: it
+is not returned, printed or logged, so a re-enabled account cannot be used with the old one.
+`PasswordReset` in the result says whether it happened.
+
 ### Stale computers
 
 ```powershell
@@ -411,7 +416,8 @@ posts a table with the test count and the coverage to the run's summary page.
   error rather than guessed. Two people with the same full name in the same site OU will make
   `New-ADUser` fail on the duplicate CN; nothing is created in that case.
 - The mover applies a template diff; it is not a reconciler.
-- The leaver does not handle mailboxes, home folders or licenses.
+- The leaver does not handle mailboxes, home folders or licenses, and does not set
+  `AccountExpirationDate` (disable, plus `-ResetPassword` if wanted, is the offboarding state).
 - `lastLogonTimestamp` is replicated with a delay of up to 14 days by default, so stale-computer
   results are not precise for short windows.
 - Tested with mocks. The suite has not been run against a live domain in CI.

@@ -45,6 +45,11 @@ $AdStubDefinitions = [ordered]@{
         param($Identity, [switch]$PassThru, $Server, $Credential)
         throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
     }
+    'Set-ADAccountPassword'          = {
+        [CmdletBinding(SupportsShouldProcess)]
+        param($Identity, [switch]$Reset, $NewPassword, $OldPassword, [switch]$PassThru, $Server, $Credential)
+        throw "AD stub '$($MyInvocation.MyCommand.Name)' was called without a mock."
+    }
     'Move-ADObject'                  = {
         [CmdletBinding(SupportsShouldProcess)]
         param($Identity, $TargetPath, [switch]$PassThru, $Server, $Credential)

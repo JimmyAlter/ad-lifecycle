@@ -21,6 +21,9 @@ version is 0, a minor version may contain breaking changes; they are called out 
   `adminCount = 1`.
 - Mover: `Set-AdLifecycleUser` applies the same guard (RID 500 and 502 always refused;
   protected accounts only with the new `-Force`).
+- Leaver: `-ResetPassword` sets a random 64-character password after disabling, under the same
+  confirmation; it is discarded (never returned, printed or logged). New `PasswordReset` property
+  on `AdLifecycle.LeaverResult` and `ResetPassword` in the audit log.
 
 ## [0.2.0] - 2026-09-28
 
