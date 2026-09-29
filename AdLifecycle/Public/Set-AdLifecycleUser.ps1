@@ -31,6 +31,11 @@ function Set-AdLifecycleUser {
         involved is resolved first (Get-ADGroup), and if one cannot be resolved nothing is
         changed for that user.
 
+        Safety guard, as in Disable-AdLifecycleUser: the built-in Administrator (RID 500) and
+        krbtgt (RID 502) are refused, and protected accounts (adminCount = 1, or members, also
+        nested, of Domain Admins, Schema Admins, Enterprise Admins or BUILTIN\Administrators)
+        are refused unless -Force is used. Nothing is changed for a refused user.
+
         ConfirmImpact is High, so PowerShell asks before changing anything; -WhatIf shows the plan
         and writes nothing. Set-AdLifecycleDepartment is an alias of this command, kept for
         backward compatibility with 0.1.0. Requires the ActiveDirectory module (RSAT) at run time.
@@ -55,6 +60,11 @@ function Set-AdLifecycleUser {
 
     .PARAMETER Manager
         The new manager (sAMAccountName, DN, GUID or SID). Must exist in AD.
+
+    .PARAMETER Force
+        Allows changing protected accounts (adminCount = 1, or members of Domain Admins, Schema
+        Admins, Enterprise Admins or BUILTIN\Administrators). The built-in Administrator
+        (RID 500) and krbtgt (RID 502) are always refused. It does not skip the confirmation.
 
     .PARAMETER ConfigPath
         Path to the .psd1 configuration file. See examples/lifecycle.config.psd1.
@@ -119,6 +129,8 @@ function Set-AdLifecycleUser {
 
         [ValidateNotNullOrEmpty()]
         [string]$Manager,
+
+        [switch]$Force,
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -188,7 +200,7 @@ function Set-AdLifecycleUser {
 
     process {
         try {
-            $user = Get-ADUser -Identity $Identity -Properties Department, MemberOf, Title, Manager, Office -ErrorAction Stop @connection
+            $user = Get-ADUser -Identity $Identity -Properties Department, MemberOf, Title, Manager, Office, PrimaryGroupID, adminCount, tokenGroups -ErrorAction Stop @connection
             if (-not $user -or -not $user.DistinguishedName) {
                 throw 'No such user.'
             }
@@ -197,6 +209,14 @@ function Set-AdLifecycleUser {
             return
         }
         $userDn = [string]$user.DistinguishedName
+
+        # Same guard as the leaver (without the own-account check): never RID 500 or 502, and
+        # protected accounts only with -Force.
+        $refusal = Get-AdLifecycleProtectionIssue -User $user -Force:$Force
+        if ($refusal) {
+            Write-Error -Message ("Refusing to change '{0}': {1}. Nothing was changed." -f $user.SamAccountName, $refusal) -Category PermissionDenied -TargetObject $Identity
+            return
+        }
         $rdn = $userDn -replace '^((?:[^,\\]|\\.)+),.*$', '$1'
         $parentDn = $userDn.Substring($rdn.Length + 1)
 

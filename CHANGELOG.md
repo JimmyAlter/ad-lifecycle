@@ -19,6 +19,8 @@ version is 0, a minor version may contain breaking changes; they are called out 
 - Leaver: members of Domain Admins, Schema Admins, Enterprise Admins or BUILTIN\Administrators
   (direct, nested via `tokenGroups`, or as primary group) are refused unless `-Force`, like
   `adminCount = 1`.
+- Mover: `Set-AdLifecycleUser` applies the same guard (RID 500 and 502 always refused;
+  protected accounts only with the new `-Force`).
 
 ## [0.2.0] - 2026-09-28
 

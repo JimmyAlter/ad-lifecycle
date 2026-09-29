@@ -212,6 +212,8 @@ What if: Performing the operation "Change department 'Finance' -> 'Sales'; add t
 ```
 
 `-Department`, `-Site`, `-Title` and `-Manager` are each optional, but at least one is required.
+The mover uses the leaver's guard: it refuses the built-in Administrator and krbtgt, and
+protected accounts (`adminCount = 1`, privileged group members) unless `-Force` is given.
 `Set-AdLifecycleDepartment`, the 0.1.0 name of this command, still works as an alias.
 
 ### Leaver

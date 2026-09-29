@@ -260,6 +260,57 @@ Describe 'Set-AdLifecycleUser (mover)' {
         }
     }
 
+    Context 'safety guard' {
+        BeforeAll {
+            $adminOu = 'CN=Users,DC=corp,DC=example'
+        }
+
+        It 'refuses <Account> even with -Force' -ForEach @(
+            @{ Account = 'the built-in Administrator'; Rid = 500; Message = '*built-in Administrator account (RID 500)*' }
+            @{ Account = 'krbtgt'; Rid = 502; Message = '*krbtgt account (RID 502)*' }
+        ) {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
+                New-TestAdUser -SamAccountName 'renamed' -DistinguishedName "CN=Renamed,$adminOu" -Rid $Rid -Property @{ Department = 'Finance' }
+            }
+
+            $run = Invoke-Captured {
+                Set-AdLifecycleUser -Identity target1 -Department Sales -Site Cordoba -ConfigPath $ExampleConfigPath -Force -Confirm:$false -ErrorAction Continue
+            }
+
+            $run.Output | Should -BeNullOrEmpty
+            "$($run.Errors[0])" | Should -BeLike "Refusing to change 'renamed': $Message"
+            $run.Errors[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+            foreach ($command in $AdWriteCommandNames) {
+                Should -Invoke $command -ModuleName AdLifecycle -Times 0 -Exactly
+            }
+        }
+
+        It 'refuses a protected account (<Case>) without -Force and changes it with -Force' -ForEach @(
+            @{ Case = 'adminCount = 1'; Property = @{ adminCount = 1 }; Message = '*adminCount is 1*' }
+            @{ Case = 'nested Domain Admins'; Property = @{ tokenGroups = @('S-1-5-21-1004336348-1177238915-682003330-512') }; Message = '*member of Domain Admins*' }
+        ) {
+            $userProperties = @{ Department = 'Finance' } + $Property
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'target1' } -MockWith {
+                New-TestAdUser -SamAccountName 'ops.admin' -DistinguishedName "CN=Ops Admin,$adminOu" -Rid 1703 -Property $userProperties
+            }
+
+            $refused = Invoke-Captured { Set-AdLifecycleUser -Identity target1 -Title 'Lead' -ConfigPath $ExampleConfigPath -Confirm:$false -ErrorAction Continue }
+            "$($refused.Errors[0])" | Should -BeLike "Refusing to change 'ops.admin': $Message"
+            Should -Invoke Set-ADUser -ModuleName AdLifecycle -Times 0 -Exactly
+
+            $forced = Set-AdLifecycleUser -Identity target1 -Title 'Lead' -ConfigPath $ExampleConfigPath -Force -Confirm:$false
+            $forced.Applied | Should -BeTrue
+            Should -Invoke Set-ADUser -ModuleName AdLifecycle -Times 1 -Exactly
+        }
+
+        It 'reads the attributes the guard needs' {
+            Set-AdLifecycleUser @mover -WhatIf | Out-Null
+            Should -Invoke Get-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+                $Properties -contains 'adminCount' -and $Properties -contains 'tokenGroups' -and $Properties -contains 'PrimaryGroupID'
+            }
+        }
+    }
+
     Context 'domain controller' {
         It 'uses -Server for every AD call' {
             Set-AdLifecycleUser @mover -Server dc07.corp.example -Confirm:$false | Out-Null
