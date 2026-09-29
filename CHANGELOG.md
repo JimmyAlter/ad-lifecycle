@@ -25,6 +25,12 @@ version is 0, a minor version may contain breaking changes; they are called out 
   confirmation; it is discarded (never returned, printed or logged). New `PasswordReset` property
   on `AdLifecycle.LeaverResult` and `ResetPassword` in the audit log.
 
+### Changed
+
+- Joiner: when the sAMAccountName needs a numeric suffix, the object name (CN) is
+  `Display Name (sam)` so a namesake in the same OU no longer makes `New-ADUser` fail on a
+  duplicate CN. The display name is unchanged.
+
 ## [0.2.0] - 2026-09-28
 
 ### Added

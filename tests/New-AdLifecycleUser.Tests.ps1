@@ -158,6 +158,36 @@ Describe 'New-AdLifecycleUser' {
             }
         }
 
+        It 'gives a suffixed joiner a distinct CN, "display name (sAMAccountName)", to avoid a duplicate CN' {
+            Mock Get-ADUser -ModuleName AdLifecycle -ParameterFilter { $LDAPFilter -like '*(sAMAccountName=lmunoz)*' } -MockWith {
+                [pscustomobject]@{ SamAccountName = 'lmunoz' }
+            }
+
+            $result = New-AdLifecycleUser @joiner -Confirm:$false
+
+            Should -Invoke New-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter {
+                $Name -ceq 'Lucía Muñoz (lmunoz2)' -and $DisplayName -ceq 'Lucía Muñoz' -and $SamAccountName -ceq 'lmunoz2'
+            }
+            $result.DistinguishedName | Should -Be "CN=Lucía Muñoz (lmunoz2),$madridOu"
+            $result.DisplayName | Should -Be 'Lucía Muñoz'
+        }
+
+        It 'keeps the plain CN when the sAMAccountName needed no suffix' {
+            New-AdLifecycleUser @joiner -Confirm:$false | Out-Null
+            Should -Invoke New-ADUser -ModuleName AdLifecycle -Times 1 -Exactly -ParameterFilter { $Name -ceq 'Lucía Muñoz' }
+        }
+
+        It 'gives the second of two same-name joiners in one run a distinct CN' {
+            $rows = @(
+                [pscustomobject]@{ GivenName = 'Lucía'; Surname = 'Muñoz'; Department = 'Finance'; Site = 'Madrid'; Title = 'Accountant' }
+                [pscustomobject]@{ GivenName = 'Lucía'; Surname = 'Muñoz'; Department = 'Sales'; Site = 'Madrid'; Title = 'Sales Rep' }
+            )
+
+            $results = $rows | New-AdLifecycleUser -ConfigPath $ExampleConfigPath -Confirm:$false
+
+            $results.DistinguishedName | Should -Be @("CN=Lucía Muñoz,$madridOu", "CN=Lucía Muñoz (lmunoz2),$madridOu")
+        }
+
         It 'still returns the password when adding a group fails, even with -ErrorAction Stop' {
             Mock Add-ADGroupMember -ModuleName AdLifecycle -ParameterFilter { $Identity -eq 'GG-App-ERP' } -MockWith {
                 throw 'Insufficient access rights to perform the operation'

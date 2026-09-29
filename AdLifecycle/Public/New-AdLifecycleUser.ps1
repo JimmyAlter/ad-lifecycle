@@ -207,6 +207,13 @@ function New-AdLifecycleUser {
 
         $upn = '{0}@{1}' -f $sam, $config.UpnSuffix
         $displayName = '{0} {1}' -f $GivenName, $Surname
+        # The object name (CN) must be unique in the OU. When the sAMAccountName needed a numeric
+        # suffix, another person most likely has the same name, so the CN carries the
+        # sAMAccountName: "Lucia Munoz (lmunoz2)". The display name stays as typed.
+        $commonName = $displayName
+        if ($sam -cne (ConvertTo-AdSamAccountName -GivenName $GivenName -Surname $Surname)) {
+            $commonName = '{0} ({1})' -f $displayName, $sam
+        }
 
         $result = [pscustomobject]@{
             PSTypeName        = 'AdLifecycle.NewUserResult'
@@ -225,7 +232,7 @@ function New-AdLifecycleUser {
             Applied           = $false
         }
 
-        $action = "Create user '{0}' in '{1}' and add to {2} group(s): {3}" -f $displayName, $ou, $groups.Count, ($groups -join ', ')
+        $action = "Create user '{0}' in '{1}' and add to {2} group(s): {3}" -f $commonName, $ou, $groups.Count, ($groups -join ', ')
         if (-not $PSCmdlet.ShouldProcess($upn, $action)) {
             $result
             return
@@ -233,7 +240,7 @@ function New-AdLifecycleUser {
 
         $password = New-AdInitialPassword -Length $passwordLength
         $newUserParams = @{
-            Name                  = $displayName
+            Name                  = $commonName
             DisplayName           = $displayName
             GivenName             = $GivenName
             Surname               = $Surname
@@ -266,6 +273,7 @@ function New-AdLifecycleUser {
                 SamAccountName    = $sam
                 UserPrincipalName = $upn
                 DisplayName       = $displayName
+                Name              = $commonName
                 OU                = $ou
                 Department        = $departmentKey
                 Site              = $siteKey

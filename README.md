@@ -413,8 +413,11 @@ posts a table with the test count and the coverage to the run's summary page.
 - On-premises Active Directory only. No Entra ID, Exchange or licensing, and no Google Workspace
   provisioning (I handle that separately; it is not part of this module).
 - The `sAMAccountName` rule is fixed. Names with no Latin letters at all are rejected with an
-  error rather than guessed. Two people with the same full name in the same site OU will make
-  `New-ADUser` fail on the duplicate CN; nothing is created in that case.
+  error rather than guessed. When the `sAMAccountName` needs a numeric suffix, the object name
+  (CN) becomes `Display Name (sam)`, for example `Lucía Muñoz (lmunoz2)`, so a namesake in the
+  same OU does not collide. A namesake whose `sAMAccountName` does not follow the rule (so no
+  suffix was needed) can still make `New-ADUser` fail on the duplicate CN; nothing is created in
+  that case.
 - The mover applies a template diff; it is not a reconciler.
 - The leaver does not handle mailboxes, home folders or licenses, and does not set
   `AccountExpirationDate` (disable, plus `-ResetPassword` if wanted, is the offboarding state).
