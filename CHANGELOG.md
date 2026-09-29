@@ -8,6 +8,8 @@ version is 0, a minor version may contain breaking changes; they are called out 
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-29
+
 ### Fixed
 
 - Leaver: the self-offboarding guard missed a `-Credential` given as a UPN whose prefix is not
@@ -30,6 +32,9 @@ version is 0, a minor version may contain breaking changes; they are called out 
 - Joiner: when the sAMAccountName needs a numeric suffix, the object name (CN) is
   `Display Name (sam)` so a namesake in the same OU no longer makes `New-ADUser` fail on a
   duplicate CN. The display name is unchanged.
+- CI: GitHub Actions are pinned to commit SHAs (version in a comment).
+- `.mailmap` maps the earlier author name to Thiago Langone.
+- README: the full-transfer mover example now shows the real output (it left out GG-App-ERP).
 
 ## [0.2.0] - 2026-09-28
 
@@ -96,6 +101,7 @@ First public release.
 - Pester 5 suite with the AD cmdlets stubbed and mocked; PSScriptAnalyzer; CI on Windows
   PowerShell 5.1, PowerShell 7 on Windows and PowerShell 7 on Linux.
 
-[Unreleased]: https://github.com/JimmyAlter/ad-lifecycle/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/JimmyAlter/ad-lifecycle/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/JimmyAlter/ad-lifecycle/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/JimmyAlter/ad-lifecycle/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/JimmyAlter/ad-lifecycle/releases/tag/v0.1.0

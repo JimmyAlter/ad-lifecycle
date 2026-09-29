@@ -1,6 +1,6 @@
 @{
     RootModule           = 'AdLifecycle.psm1'
-    ModuleVersion        = '0.2.0'
+    ModuleVersion        = '0.3.0'
     GUID                 = '4917c232-263e-4053-b2cb-cd3e90979489'
     Author               = 'Thiago Langone'
     Copyright            = '(c) 2026 Thiago Langone. MIT License.'

@@ -351,7 +351,7 @@ Departments.Finance Has no groups. Every department needs at least one group.
 
 ## Testing
 
-The Pester 5 suite is the main point of this repository (251 tests; Pester reports about 98% of
+The Pester 5 suite is the main point of this repository (280 tests; Pester reports about 98% of
 the module's commands covered on Windows PowerShell 5.1, and CI fails below 90%). It proves,
 without any domain controller:
 
